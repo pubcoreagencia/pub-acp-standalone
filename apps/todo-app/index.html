@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lista de Tarefas</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="header-icon" aria-hidden="true">✓</div>
+      <div>
+        <h1 id="app-title">Lista de Tarefas</h1>
+        <p class="subtitle">Organize suas atividades diárias com foco e simplicidade</p>
+      </div>
+    </header>
+
+    <main>
+      <form id="todo-form" class="todo-form" aria-label="Formulário para adicionar tarefa">
+        <div class="input-wrapper">
+          <input
+            type="text"
+            id="todo-input"
+            class="todo-input"
+            placeholder="O que você precisa fazer hoje?"
+            autocomplete="off"
+            aria-label="Descrição da nova tarefa"
+            maxlength="200"
+          />
+          <button type="submit" id="add-btn" class="btn btn-primary" aria-label="Adicionar tarefa">
+            <span class="btn-icon">+</span>
+            <span class="btn-text">Adicionar</span>
+          </button>
+        </div>
+        <div id="form-error" class="form-error" role="alert" aria-live="polite"></div>
+      </form>
+
+      <section class="todo-stats" aria-label="Resumo de tarefas">
+        <div class="stat-item">
+          <span class="stat-label">Total:</span>
+          <span id="stat-total" class="stat-badge">0</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Concluídas:</span>
+          <span id="stat-completed" class="stat-badge stat-badge-success">0</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Pendentes:</span>
+          <span id="stat-pending" class="stat-badge stat-badge-warning">0</span>
+        </div>
+      </section>
+
+      <div class="filters-container">
+        <div class="filter-group" role="tablist" aria-label="Filtro de exibição">
+          <button type="button" class="filter-btn active" data-filter="all" role="tab" aria-selected="true">Todas</button>
+          <button type="button" class="filter-btn" data-filter="pending" role="tab" aria-selected="false">Pendentes</button>
+          <button type="button" class="filter-btn" data-filter="completed" role="tab" aria-selected="false">Concluídas</button>
+        </div>
+        <button type="button" id="clear-completed-btn" class="btn btn-secondary btn-sm" aria-label="Limpar todas as tarefas concluídas">
+          Limpar concluídas
+        </button>
+      </div>
+
+      <ul id="todo-list" class="todo-list" aria-label="Lista de tarefas">
+        <!-- Itens inseridos dinamicamente via app.js -->
+      </ul>
+
+      <div id="empty-state" class="empty-state" aria-live="polite">
+        <p class="empty-title">Nenhuma tarefa encontrada</p>
+        <p class="empty-desc">Adicione uma tarefa no campo acima para começar.</p>
+      </div>
+    </main>
+
+    <footer class="app-footer">
+      <p>Pub ACP Standalone &bull; LocalStorage ativado</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
