@@ -14,3 +14,14 @@ TEST | EXPECTED | ACTUAL | STATUS | EVIDENCE
 `contract:session-busy` | Provocar concorrência direta sem acesso interno | Concorrência paralela estrita em um único thread físico | NOT TESTABLE FROM BLACK-BOX CONTRACT | Registrado conforme especificação da Phase 1 (requer concorrência artificial não exposta no contrato black-box)
 `cli:health` | Execução CLI exibe "ACP-LAB ONLINE" e JSON formatado | CLI imprimiu "ACP-LAB ONLINE" e objeto de status na saída padrão | PASS | `npm run cli:health` / `dist/cli/index.js`
 `cli:prompt` | Execução CLI submete prompt e imprime resposta física do ChatGPT | CLI imprimiu "ACP-CLI-E2E-OK" com metadados (turn 1, duration_ms: 2788) | PASS | `npm run cli:prompt`
+
+## BACKGROUND BROWSER RELIABILITY
+
+| Scenario              | Chrome State          | ACP HTTP | CDP  | Prompt | Multi-turn | Result | Evidence |
+| --------------------- | --------------------- | -------- | ---- | ------ | ---------- | ------ | -------- |
+| Foreground baseline   | Foreground            | PASS     | PASS | PASS   | N/A        | PASS   | `tests/integration/background-reliability.test.ts` |
+| Behind-window         | Visible but unfocused | PASS     | PASS | PASS   | N/A        | PASS   | `tests/integration/background-reliability.test.ts` |
+| Background multi-turn | Behind-window         | PASS     | PASS | PASS   | PASS       | PASS   | `tests/integration/background-reliability.test.ts` |
+| Live health           | Background            | PASS     | PASS | N/A    | N/A        | PASS   | `tests/integration/live-health.test.ts` |
+
+> Background browser execution is operationally validated. Chrome foreground/focus is not required by the tested transport path.

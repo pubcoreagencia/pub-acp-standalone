@@ -84,3 +84,16 @@ npm run test:contract
 npm run test:integration
 npm run test:e2e
 ```
+
+## Known Limitation — ChatGPT DOM Virtualization
+
+* **Conversas Longas:** O ChatGPT pode virtualizar e remover mensagens antigas do DOM em conversas com múltiplos turnos.
+* **Mecanismo Atual:** O driver do ACP-LAB utiliza a contagem de nós `assistant` como parte da detecção de novos turnos.
+* **Comportamento Observado:** Quando nós antigos saem do DOM, a contagem total diminui, o que pode fazer com que `waitForCompletion()` aguarde até o timeout, apesar de a resposta já ter sido renderizada na interface.
+* **Escopo:** Esta investigação foi reproduzida e observada empiricamente durante a Phase 2. Trata-se de uma limitação do mecanismo de observação do driver, e **não** de evidência de dependência de Chrome em foreground.
+* **Trabalho Futuro:** A correção desta limitação fica formalmente postergada para endurecimento posterior do driver:
+  ```text
+  FOLLOW-UP:
+  DOM virtualization resilient turn detection
+  ```
+
