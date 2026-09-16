@@ -10,7 +10,8 @@
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
-    "test": "npm run test:contract && npm run test:integration && npm run test:e2e",
+    "test": "npm run test:unit && npm run test:contract && npm run test:integration && npm run test:e2e",
+    "test:unit": "tsx --test tests/unit/**/*.test.ts",
     "test:contract": "tsx --test tests/contract/**/*.test.ts",
     "test:integration": "tsx --test tests/integration/**/*.test.ts",
     "test:e2e": "tsx --test tests/e2e/**/*.test.ts",
