@@ -1,0 +1,37 @@
+{
+  "name": "pub-acp-standalone",
+  "version": "0.1.0",
+  "description": "Independent Black-Box Consumer for PUB-ACP-LAB",
+  "main": "dist/client/index.js",
+  "types": "dist/client/index.d.ts",
+  "bin": {
+    "acp": "dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "npm run test:contract && npm run test:integration && npm run test:e2e",
+    "test:contract": "tsx --test tests/contract/**/*.test.ts",
+    "test:integration": "tsx --test tests/integration/**/*.test.ts",
+    "test:e2e": "tsx --test tests/e2e/**/*.test.ts",
+    "cli:health": "tsx src/cli/index.ts health",
+    "cli:prompt": "tsx src/cli/index.ts prompt"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pubcoreagencia/pub-acp-standalone.git"
+  },
+  "keywords": [
+    "pub",
+    "acp",
+    "standalone",
+    "client"
+  ],
+  "author": "PUB Core Agência",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
