@@ -85,9 +85,16 @@ export interface ClosedLoopRunReport {
   };
 }
 
+import { IEventBus } from '../observability/EventBus.js';
+export { ExecutionContext } from '../multiproject/types.js';
+import { ExecutionContext } from '../multiproject/types.js';
+
 export interface ClosedLoopConfig {
   defaultTimeoutMs?: number;
   cwd?: string;
   effort?: 'low' | 'medium' | 'high';
   model?: string;
+  eventBus?: IEventBus;
+  projectName?: string;
+  executionContext?: ExecutionContext;
 }

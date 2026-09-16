@@ -1,0 +1,231 @@
+import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { join, extname } from 'node:path';
+import { IEventBus, EventBus } from '../observability/EventBus.js';
+import { IRunStore, MemoryRunStore } from '../observability/RunStore.js';
+import { DemoFeedGenerator } from '../observability/DemoFeed.js';
+import { wireEventBusToRunStore } from '../observability/wireEventBus.js';
+import { sanitizeObject } from '../observability/sanitizer.js';
+
+export interface ControlRoomServerOptions {
+  port?: number;
+  host?: string;
+  publicDir?: string;
+  eventBus?: IEventBus;
+  runStore?: IRunStore;
+}
+
+export class ControlRoomServer {
+  private readonly port: number;
+  private readonly host: string;
+  private readonly publicDir: string;
+  private readonly eventBus: IEventBus;
+  private readonly runStore: IRunStore;
+  private readonly demoFeed: DemoFeedGenerator;
+  private server?: Server;
+  private readonly openSockets = new Set<import('node:net').Socket>();
+
+  constructor(options: ControlRoomServerOptions = {}) {
+    this.port = options.port !== undefined ? options.port : 5173;
+    this.host = options.host || '127.0.0.1';
+    this.publicDir = options.publicDir || join(process.cwd(), 'public');
+    this.eventBus = options.eventBus || new EventBus();
+    this.runStore = options.runStore || new MemoryRunStore();
+
+    wireEventBusToRunStore(this.eventBus, this.runStore);
+    this.demoFeed = new DemoFeedGenerator(this.eventBus, this.runStore);
+  }
+
+  getEventBus(): IEventBus {
+    return this.eventBus;
+  }
+
+  getRunStore(): IRunStore {
+    return this.runStore;
+  }
+
+  getDemoFeed(): DemoFeedGenerator {
+    return this.demoFeed;
+  }
+
+  async start(): Promise<{ port: number; host: string; url: string }> {
+    return new Promise((resolve, reject) => {
+      this.server = createServer((req, res) => {
+        this.handleRequest(req, res).catch(err => {
+          console.error('[ControlRoomServer] Unhandled request error:', err);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Internal Server Error' }));
+          }
+        });
+      });
+
+      this.server.on('connection', socket => {
+        this.openSockets.add(socket);
+        socket.on('close', () => this.openSockets.delete(socket));
+      });
+
+      this.server.on('error', reject);
+      this.server.listen(this.port, this.host, () => {
+        const addr = this.server?.address();
+        const effectivePort = typeof addr === 'object' && addr ? addr.port : this.port;
+        resolve({
+          port: effectivePort,
+          host: this.host,
+          url: `http://${this.host}:${effectivePort}`
+        });
+      });
+    });
+  }
+
+  async stop(): Promise<void> {
+    this.demoFeed.stop();
+    for (const socket of this.openSockets) {
+      socket.destroy();
+    }
+    this.openSockets.clear();
+
+    return new Promise((resolve, reject) => {
+      if (!this.server) return resolve();
+      this.server.close(err => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+  }
+
+  private sendJson(res: ServerResponse, statusCode: number, data: unknown): void {
+    const sanitized = sanitizeObject(data);
+    res.writeHead(statusCode, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type'
+    });
+    res.end(JSON.stringify(sanitized));
+  }
+
+  private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const parsedUrl = new URL(req.url || '/', `http://${this.host}:${this.port}`);
+    const pathname = parsedUrl.pathname;
+    const method = req.method?.toUpperCase();
+
+    // CORS preflight
+    if (method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type'
+      });
+      res.end();
+      return;
+    }
+
+    // API Routes
+    if (pathname === '/api/runs' && method === 'GET') {
+      const runs = this.runStore.getRuns();
+      return this.sendJson(res, 200, runs);
+    }
+
+    const runMatch = pathname.match(/^\/api\/runs\/([^\/]+)$/);
+    if (runMatch && method === 'GET') {
+      const runId = runMatch[1];
+      const run = this.runStore.getRun(runId);
+      if (!run) {
+        return this.sendJson(res, 404, { error: `Run ${runId} not found` });
+      }
+      return this.sendJson(res, 200, run);
+    }
+
+    const eventsMatch = pathname.match(/^\/api\/runs\/([^\/]+)\/events$/);
+    if (eventsMatch && method === 'GET') {
+      const runId = eventsMatch[1];
+      const run = this.runStore.getRun(runId);
+      if (!run) {
+        return this.sendJson(res, 404, { error: `Run ${runId} not found` });
+      }
+      return this.sendJson(res, 200, run.events);
+    }
+
+    // SSE Stream Route
+    const streamMatch = pathname.match(/^\/api\/runs\/([^\/]+)\/stream$/);
+    if (streamMatch && method === 'GET') {
+      const runId = streamMatch[1];
+      return this.handleSseStream(runId, req, res);
+    }
+
+    // Trigger Demo Run
+    if (pathname === '/api/demo/start' && method === 'POST') {
+      const runId = this.demoFeed.generateDemoRun();
+      return this.sendJson(res, 201, { message: 'Demo run initiated', runId });
+    }
+
+    // Static Assets
+    if (method === 'GET') {
+      let filePath = pathname === '/' ? 'index.html' : pathname.replace(/^\//, '');
+      const fullPath = join(this.publicDir, filePath);
+      const ext = extname(fullPath).toLowerCase();
+
+      const mimeTypes: Record<string, string> = {
+        '.html': 'text/html; charset=utf-8',
+        '.js': 'application/javascript; charset=utf-8',
+        '.css': 'text/css; charset=utf-8',
+        '.json': 'application/json; charset=utf-8',
+        '.svg': 'image/svg+xml',
+        '.png': 'image/png'
+      };
+
+      try {
+        const content = await readFile(fullPath);
+        res.writeHead(200, {
+          'Content-Type': mimeTypes[ext] || 'text/plain',
+          'Access-Control-Allow-Origin': '*'
+        });
+        res.end(content);
+        return;
+      } catch {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not Found');
+        return;
+      }
+    }
+
+    this.sendJson(res, 404, { error: 'Endpoint not found' });
+  }
+
+  private handleSseStream(runId: string, req: IncomingMessage, res: ServerResponse): void {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*'
+    });
+
+    res.write('retry: 3000\n\n');
+
+    // 1. Replay existing events for this run
+    const existingRun = this.runStore.getRun(runId);
+    if (existingRun && existingRun.events.length > 0) {
+      for (const event of existingRun.events) {
+        const sanitized = sanitizeObject(event);
+        res.write(`data: ${JSON.stringify(sanitized)}\n\n`);
+      }
+    }
+
+    // 2. Subscribe to new events
+    const unsubscribe = this.eventBus.subscribe(runId, event => {
+      const sanitized = sanitizeObject(event);
+      res.write(`data: ${JSON.stringify(sanitized)}\n\n`);
+    });
+
+    // Heartbeat to keep connection active
+    const heartbeatTimer = setInterval(() => {
+      res.write(': ping\n\n');
+    }, 15000);
+
+    req.on('close', () => {
+      clearInterval(heartbeatTimer);
+      unsubscribe();
+    });
+  }
+}

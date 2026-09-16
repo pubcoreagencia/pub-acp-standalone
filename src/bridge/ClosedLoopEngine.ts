@@ -6,8 +6,11 @@ import {
   ClosedLoopRunReport,
   ClosedLoopTurnSummary,
   LoopEnvelope,
-  LoopResultEnvelope
+  LoopResultEnvelope,
+  ExecutionContext
 } from './types.js';
+import { IEventBus } from '../observability/EventBus.js';
+import { AutonomyEvent } from '../observability/types.js';
 
 export class ClosedLoopEngine {
   private readonly gptTransport: IGptTransport;
@@ -28,9 +31,12 @@ export class ClosedLoopEngine {
     }
     this.config = {
       defaultTimeoutMs: config.defaultTimeoutMs || 300000,
-      cwd: config.cwd || process.cwd(),
+      cwd: config.cwd || (config.executionContext?.workspacePath) || process.cwd(),
       effort: config.effort || 'low',
-      model: config.model
+      model: config.model,
+      eventBus: config.eventBus,
+      projectName: config.projectName || config.executionContext?.projectName,
+      executionContext: config.executionContext
     };
   }
 
@@ -42,6 +48,16 @@ export class ClosedLoopEngine {
     return this.agBridge;
   }
 
+  private emitEvent(event: AutonomyEvent): void {
+    if (this.config.eventBus) {
+      try {
+        this.config.eventBus.publish(event);
+      } catch (err) {
+        console.error('[ClosedLoopEngine] Failed to publish event:', err);
+      }
+    }
+  }
+
   async runLoop(
     initialPromptOrInstructions: string,
     options: {
@@ -51,14 +67,40 @@ export class ClosedLoopEngine {
       agSessionId?: string;
       turnPromptBuilder?: (prevAgResponse: string, turn: number) => string;
       stopCondition?: (agResponse: string, turn: number) => boolean;
+      executionContext?: ExecutionContext;
+      cwd?: string;
     } = {}
   ): Promise<ClosedLoopRunReport> {
-    const loopId = options.loopId || `loop-${randomUUID()}`;
+    const execCtx = options.executionContext || this.config.executionContext;
+    const loopId = options.loopId || execCtx?.runId || `loop-${randomUUID()}`;
     const maxTurns = options.maxTurns || 3;
     const gptSessionId = options.gptSessionId || `gpt-loop-${randomUUID()}`;
     const agSessionId = options.agSessionId || `ag-loop-${randomUUID()}`;
     const startedAt = new Date().toISOString();
     const overallStartTime = Date.now();
+    const effectiveCwd = options.cwd || execCtx?.workspacePath || this.config.cwd;
+    const effectiveProject = execCtx?.projectName || this.config.projectName || 'ACP Standalone';
+
+    this.emitEvent({
+      id: `evt-${randomUUID()}`,
+      runId: loopId,
+      timestamp: startedAt,
+      type: 'RUN_STARTED',
+      summary: `ClosedLoop run ${loopId} initiated with maxTurns=${maxTurns}.`,
+      details: {
+        loopId,
+        project: effectiveProject,
+        projectId: execCtx?.projectId,
+        projectName: execCtx?.projectName,
+        taskId: execCtx?.taskId,
+        workspacePath: effectiveCwd,
+        repository: execCtx?.repository,
+        branch: execCtx?.branch,
+        commit: execCtx?.commit,
+        maxTurns,
+        cwd: effectiveCwd
+      }
+    });
 
     const turnSummaries: ClosedLoopTurnSummary[] = [];
     let currentAgResponse = '';
@@ -87,6 +129,20 @@ export class ClosedLoopEngine {
       }
       this.executedRequests.add(gptRequestId);
 
+      this.emitEvent({
+        id: `evt-${randomUUID()}`,
+        runId: loopId,
+        timestamp: gptStartedAt,
+        type: 'GPT_DECISION',
+        turn,
+        summary: `Turn ${turn}: Dispatching prompt to GPT planner.`,
+        details: {
+          requestId: gptRequestId,
+          turn,
+          promptSnippet: gptPrompt.slice(0, 300)
+        }
+      });
+
       // 2. Dispatch to GPT Free
       const gptResult = await this.gptTransport.continueSession(effectiveGptSessionId, gptPrompt, {
         request_id: gptRequestId,
@@ -108,6 +164,16 @@ export class ClosedLoopEngine {
           message: gptResult.error?.message || `GPT failed on turn ${turn} with status ${gptResult.status}`,
           where: 'gpt'
         };
+
+        this.emitEvent({
+          id: `evt-${randomUUID()}`,
+          runId: loopId,
+          timestamp: gptCompletedAt,
+          type: 'RUN_FAILED',
+          turn,
+          summary: `Turn ${turn}: GPT failed (${gptResult.status}) - ${loopError.message}`,
+          details: { error: loopError }
+        });
 
         turnSummaries.push({
           turn,
@@ -144,9 +210,22 @@ export class ClosedLoopEngine {
       }
       this.executedRequests.add(agRequestId);
 
+      this.emitEvent({
+        id: `evt-${randomUUID()}`,
+        runId: loopId,
+        timestamp: agStartedAt,
+        type: 'AG_STARTED',
+        turn,
+        summary: `Turn ${turn}: Executing Antigravity instruction.`,
+        details: {
+          requestId: agRequestId,
+          instructionSnippet: instructionForAg.slice(0, 300)
+        }
+      });
+
       const agResult = await this.agBridge.executeTurn(agSessionId, instructionForAg, {
         request_id: agRequestId,
-        cwd: this.config.cwd,
+        cwd: effectiveCwd,
         effort: this.config.effort,
         model: this.config.model,
         timeout_ms: this.config.defaultTimeoutMs
@@ -155,6 +234,33 @@ export class ClosedLoopEngine {
       const agCompletedAt = new Date().toISOString();
       const agDurationMs = Date.now() - agStartTime;
       currentAgResponse = agResult.response;
+
+      this.emitEvent({
+        id: `evt-${randomUUID()}`,
+        runId: loopId,
+        timestamp: agCompletedAt,
+        type: 'AG_OUTPUT',
+        turn,
+        summary: `Turn ${turn}: Antigravity responded in ${agDurationMs}ms (${agResult.status}).`,
+        details: {
+          status: agResult.status,
+          durationMs: agDurationMs,
+          outputSnippet: agResult.response.slice(0, 300)
+        }
+      });
+
+      this.emitEvent({
+        id: `evt-${randomUUID()}`,
+        runId: loopId,
+        timestamp: agCompletedAt,
+        type: 'AG_FINISHED',
+        turn,
+        summary: `Turn ${turn}: Antigravity execution finished.`,
+        details: {
+          conversationId: agResult.conversation_id,
+          status: agResult.status
+        }
+      });
 
       const turnSummary: ClosedLoopTurnSummary = {
         turn,
@@ -192,6 +298,16 @@ export class ClosedLoopEngine {
           message: agResult.error?.message || `Antigravity execution failed on turn ${turn}`,
           where: 'antigravity'
         };
+
+        this.emitEvent({
+          id: `evt-${randomUUID()}`,
+          runId: loopId,
+          timestamp: agCompletedAt,
+          type: 'RUN_FAILED',
+          turn,
+          summary: `Turn ${turn}: Run failed at Antigravity execution.`,
+          details: { error: loopError }
+        });
         break;
       }
 
@@ -205,6 +321,21 @@ export class ClosedLoopEngine {
     }
 
     const agSession = this.agBridge.getSession(agSessionId);
+    const completedAt = new Date().toISOString();
+
+    if (overallStatus === 'COMPLETED') {
+      this.emitEvent({
+        id: `evt-${randomUUID()}`,
+        runId: loopId,
+        timestamp: completedAt,
+        type: 'RUN_COMPLETED',
+        summary: `ClosedLoop run ${loopId} completed successfully across ${turnSummaries.length} turns.`,
+        details: {
+          totalTurns: turnSummaries.length,
+          totalDurationMs: Date.now() - overallStartTime
+        }
+      });
+    }
 
     return {
       loop_id: loopId,
@@ -216,7 +347,7 @@ export class ClosedLoopEngine {
       turns: turnSummaries,
       total_duration_ms: Date.now() - overallStartTime,
       started_at: startedAt,
-      completed_at: new Date().toISOString(),
+      completed_at: completedAt,
       manual_copy_paste_operations: 0,
       error: loopError
     };

@@ -11,8 +11,11 @@ async function main() {
     console.log('PUB-ACP Standalone CLI');
     console.log('');
     console.log('Usage:');
+    console.log('  acp "<task prompt>"');
+    console.log('  acp run "<task prompt>" [--turns <n>] [--model <name>]');
     console.log('  acp health');
     console.log('  acp prompt "<text>" [--session <id>] [--timeout <ms>]');
+    console.log('  acp control-room [--port <number>] [--host <ip>]');
     console.log('');
     console.log('Environment:');
     console.log('  ACP_LAB_URL=http://127.0.0.1:5125 (default)');
@@ -64,6 +67,134 @@ async function main() {
         metadata: res.metadata
       }, null, 2));
       process.exit(0);
+    }
+
+    if (command === 'control-room') {
+      const { ControlRoomServer } = await import('../server/ControlRoomServer.js');
+      let port = 5173;
+      let host = '127.0.0.1';
+
+      for (let i = 1; i < args.length; i++) {
+        if (args[i] === '--port' && args[i + 1]) {
+          port = parseInt(args[i + 1], 10);
+          i++;
+        } else if (args[i] === '--host' && args[i + 1]) {
+          host = args[i + 1];
+          i++;
+        }
+      }
+
+      const server = new ControlRoomServer({ port, host });
+      const info = await server.start();
+      console.log('==================================================');
+      console.log('PUB ACP CONTROL ROOM');
+      console.log('==================================================');
+      console.log(`Control Room listening at: ${info.url}`);
+      console.log('Open your browser to observe ClosedLoopEngine runs.');
+      console.log('Press Ctrl+C to stop.');
+      return;
+    }
+
+    if (command === 'run' || (!['health', 'prompt', 'control-room'].includes(command) && !command.startsWith('-'))) {
+      const taskPrompt = command === 'run' ? args[1] : command;
+      if (!taskPrompt) {
+        console.error('Error: Task prompt required. Usage: acp "<task prompt>" or acp run "<task prompt>"');
+        process.exit(1);
+      }
+
+      let maxTurns = 5;
+      let model: string | undefined;
+
+      const argStartIndex = command === 'run' ? 2 : 1;
+      for (let i = argStartIndex; i < args.length; i++) {
+        if (args[i] === '--turns' && args[i + 1]) {
+          maxTurns = parseInt(args[i + 1], 10);
+          i++;
+        } else if (args[i] === '--model' && args[i + 1]) {
+          model = args[i + 1];
+          i++;
+        }
+      }
+
+      const cwd = process.cwd();
+      console.log('==================================================');
+      console.log('PUB ACP — AUTONOMOUS CLOSED-LOOP EXECUTION');
+      console.log('==================================================');
+      console.log(`Workspace: ${cwd}`);
+      console.log(`Task:      ${taskPrompt}`);
+      console.log(`Max turns: ${maxTurns}`);
+      console.log('Validating workspace and security rules...');
+
+      const { WorkspaceResolver } = await import('../multiproject/WorkspaceResolver.js');
+      const { SafetyGate } = await import('../multiproject/SafetyGate.js');
+      const { ClosedLoopEngine } = await import('../bridge/ClosedLoopEngine.js');
+
+      const resolver = new WorkspaceResolver();
+      const resolution = resolver.resolveWorkspace(cwd);
+
+      if (!resolution.ok) {
+        console.error(`\n[FAIL CLOSED] Workspace resolution blocked!`);
+        console.error(`Reason:  ${resolution.reason}`);
+        console.error(`Message: ${resolution.message}`);
+        process.exit(1);
+      }
+
+      const safetyGate = new SafetyGate();
+      const safetyResult = safetyGate.evaluate(resolution);
+
+      if (!safetyResult.passed || !safetyResult.context) {
+        console.error(`\n[FAIL CLOSED] SafetyGate blocked execution!`);
+        console.error(`Reason:  ${safetyResult.reason}`);
+        console.error(`Message: ${safetyResult.message}`);
+        process.exit(1);
+      }
+
+      const context = safetyResult.context;
+      console.log(`Repository: ${context.repository} (branch: ${context.branch})`);
+      console.log(`SafetyGate: PASSED`);
+      console.log('\n[ClosedLoopEngine] Initializing autonomous loop...\n');
+
+      const engine = new ClosedLoopEngine(undefined, undefined, {
+        cwd: context.workspacePath,
+        model,
+        executionContext: context
+      });
+
+      const initialPrompt = `Você é o arquiteto técnico autônomo.
+O diretório de trabalho exclusivo da tarefa é: "${context.workspacePath}".
+O executor das ações no workspace é o Antigravity.
+Sua missão: ${taskPrompt}
+
+Instruções para você:
+1. Responda com as instruções técnicas exatas e comandos concretos para o Antigravity executar agora neste workspace.
+2. Quando a tarefa estiver concluída e validada no workspace, encerre sua mensagem com o token: [[STATUS: READY]].`;
+
+      const report = await engine.runLoop(initialPrompt, {
+        loopId: context.runId,
+        maxTurns,
+        executionContext: context,
+        turnPromptBuilder: (prevAgResponse, turn) =>
+          `[RESULTADO DO ANTIGRAVITY - TURNO ${turn - 1}]:\n"""\n${prevAgResponse}\n"""\n` +
+          `Analise o resultado acima. Forneça a instrução do próximo passo para o Antigravity ou encerre com [[STATUS: READY]] se concluído.`
+      });
+
+      for (const t of report.turns) {
+        console.log(`\n--- TURNO ${t.turn} ---`);
+        console.log(`[GPT]: ${t.gpt_response?.slice(0, 150)}...`);
+        console.log(`[AG]:  ${t.antigravity_response?.slice(0, 150)}...`);
+      }
+
+      console.log('\n==================================================');
+      console.log(`EXECUTION ${report.status}`);
+      console.log('==================================================');
+      console.log(`Total turns:    ${report.total_turns}`);
+      console.log(`Total duration: ${(report.total_duration_ms / 1000).toFixed(2)}s`);
+
+      if (report.error) {
+        console.error(`Error (${report.error.where}): ${report.error.message}`);
+      }
+
+      process.exit(report.status === 'COMPLETED' ? 0 : 1);
     }
 
     console.error(`Unknown command: ${command}`);
