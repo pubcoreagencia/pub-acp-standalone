@@ -12,6 +12,7 @@ export interface HealthResponse {
     transport_healthy: boolean;
     browser_healthy: boolean;
     cdp_connected: boolean;
+    page_responsive?: boolean;
     backend_type?: string;
     [key: string]: unknown;
   } | string;
@@ -30,18 +31,25 @@ export interface PromptResponse {
   status: 'completed' | 'error';
   request_id: string;
   session_id: string;
+  text?: string;
   response?: string;
   duration_ms?: number;
   metadata?: {
+    turn?: number;
+    duration_ms?: number;
+    attempt?: number;
+    timestamp?: string;
     model?: string;
     stop_reason?: string;
-    attempt?: number;
     url?: string;
     [key: string]: unknown;
   };
   error?: {
     code: string;
     message: string;
+    category?: string;
+    retryable?: boolean;
+    recoverable?: boolean;
     details?: unknown;
   };
 }

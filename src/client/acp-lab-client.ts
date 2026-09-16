@@ -1,4 +1,4 @@
-﻿import { randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import {
   AcpLabClientOptions,
   HealthResponse,
@@ -102,7 +102,18 @@ export class AcpLabClient {
         throw new AcpLabClientError(errMsg, errCode, response.status, json);
       }
 
-      return json as PromptResponse;
+      const promptResponse: PromptResponse = {
+        status: json.status,
+        request_id: json.request_id,
+        session_id: json.session_id,
+        text: json.text,
+        response: json.response || json.text,
+        duration_ms: json.metadata?.duration_ms || json.duration_ms,
+        metadata: json.metadata,
+        error: json.error
+      };
+
+      return promptResponse;
     } catch (err: any) {
       if (err.name === 'AbortError') {
         throw new AcpLabClientError(`Prompt timed out after ${effectiveTimeoutMs}ms`, 'TIMEOUT');
