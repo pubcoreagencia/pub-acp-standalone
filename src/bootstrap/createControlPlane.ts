@@ -13,6 +13,10 @@ import { ClosedLoopEngine } from '../bridge/ClosedLoopEngine.js';
 import { ProjectDispatcher, IProjectDispatcher } from '../multiproject/ProjectDispatcher.js';
 import { ExecutionContext, ProjectDefinition } from '../multiproject/types.js';
 
+import { ProjectCatalogLoader } from '../catalog/ProjectCatalogLoader.js';
+import { IProjectCatalog } from '../catalog/types.js';
+import { FileProjectCatalog } from '../catalog/FileProjectCatalog.js';
+
 export interface ControlPlaneOptions {
   cwd?: string;
   gitInspector?: GitInspector;
@@ -22,6 +26,7 @@ export interface ControlPlaneOptions {
   workspaceLock?: IWorkspaceLock;
   contextStore?: IProjectContextStore;
   projectRegistry?: IProjectRegistry;
+  projectCatalog?: IProjectCatalog;
   resolver?: WorkspaceResolver;
   safetyGate?: SafetyGate;
   engineFactory?: (context: ExecutionContext) => ClosedLoopEngine;
@@ -34,6 +39,7 @@ export interface ControlPlane {
   workspaceLock: IWorkspaceLock;
   contextStore: IProjectContextStore;
   projectRegistry: IProjectRegistry;
+  projectCatalog?: IProjectCatalog;
   resolver: WorkspaceResolver;
   safetyGate: SafetyGate;
   dispatcher: IProjectDispatcher;
@@ -63,7 +69,14 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
   const resolver = options.resolver || new WorkspaceResolver(projectRegistry, gitInspector);
   const safetyGate = options.safetyGate || new SafetyGate();
 
-  // 4. Discover current workspace from Git
+  // 4. Load & register authorized projects from ProjectCatalog (if provided or discoverable)
+  const projectCatalog = options.projectCatalog !== undefined ? options.projectCatalog : new FileProjectCatalog();
+  if (projectCatalog) {
+    const catalogLoader = new ProjectCatalogLoader(projectCatalog, resolver, projectRegistry);
+    await catalogLoader.loadAndRegister();
+  }
+
+  // 5. Discover current workspace from Git
   let currentProject: ProjectDefinition | undefined;
   const resolution = resolver.resolveWorkspace(cwd);
 
@@ -116,6 +129,7 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
     workspaceLock,
     contextStore,
     projectRegistry,
+    projectCatalog,
     resolver,
     safetyGate,
     dispatcher,

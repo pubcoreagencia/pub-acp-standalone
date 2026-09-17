@@ -602,14 +602,15 @@ async function loadConversations(projectId) {
   try {
     const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/conversations`);
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    const conversations = await res.json();
+    const data = await res.json();
+    const convList = Array.isArray(data) ? data : (Array.isArray(data?.conversations) ? data.conversations : []);
 
-    if (conversations && conversations.length > 0) {
-      conversations.forEach(conv => {
+    if (convList.length > 0) {
+      convList.forEach(conv => {
         const opt = document.createElement('option');
         opt.value = conv.conversationId;
         const preview = conv.title || conv.summarySnippet || (conv.conversationId.slice(0, 8) + '...');
-        const updated = conv.updatedAt ? ` (${formatTime(conv.updatedAt)})` : '';
+        const updated = conv.lastModifiedTime ? ` (${formatTime(conv.lastModifiedTime)})` : (conv.updatedAt ? ` (${formatTime(conv.updatedAt)})` : '');
         opt.textContent = `${preview}${updated}`;
         elSelectConversation.appendChild(opt);
       });

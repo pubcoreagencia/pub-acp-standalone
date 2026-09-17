@@ -74,6 +74,7 @@ async function main() {
       const { ControlRoomServer } = await import('../server/ControlRoomServer.js');
       let port = 5173;
       let host = '127.0.0.1';
+      let catalogPath: string | undefined;
 
       for (let i = 1; i < args.length; i++) {
         if (args[i] === '--port' && args[i + 1]) {
@@ -82,10 +83,15 @@ async function main() {
         } else if (args[i] === '--host' && args[i + 1]) {
           host = args[i + 1];
           i++;
+        } else if (args[i] === '--catalog' && args[i + 1]) {
+          catalogPath = args[i + 1];
+          i++;
         }
       }
 
-      const controlPlane = await createControlPlane();
+      const { FileProjectCatalog } = await import('../catalog/FileProjectCatalog.js');
+      const projectCatalog = catalogPath ? new FileProjectCatalog({ catalogPath }) : undefined;
+      const controlPlane = await createControlPlane(projectCatalog ? { projectCatalog } : {});
       const server = new ControlRoomServer({
         port,
         host,
@@ -100,10 +106,13 @@ async function main() {
       console.log('PUB ACP CONTROL ROOM');
       console.log('==================================================');
       console.log(`Control Room listening at: ${info.url}`);
-      if (controlPlane.currentProject) {
-        console.log(`Registered project:        ${controlPlane.currentProject.projectId} (${controlPlane.currentProject.projectName})`);
-        console.log(`Workspace:                 ${controlPlane.currentProject.workspacePath}`);
-      } else {
+      const projects = controlPlane.projectRegistry.listProjects();
+      console.log(`Available projects (${projects.length}):`);
+      for (const p of projects) {
+        const isCurrent = controlPlane.currentProject?.projectId === p.projectId ? ' [CURRENT/CWD]' : '';
+        console.log(`  - ${p.projectId} (${p.projectName || p.repository}) [${p.defaultBranch}]${isCurrent}`);
+      }
+      if (!controlPlane.currentProject) {
         console.log('Warning: No git workspace detected at current working directory.');
       }
       console.log('Open your browser to observe ClosedLoopEngine runs.');
