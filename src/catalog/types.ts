@@ -13,9 +13,25 @@ export interface CatalogProjectEntry {
 
 export interface ProjectCatalogData {
   version?: string;
+  description?: string;
   projects: CatalogProjectEntry[];
 }
 
 export interface IProjectCatalog {
   loadProjects(): Promise<CatalogProjectEntry[]>;
+}
+
+export interface CatalogValidationIssue {
+  projectId?: string;
+  workspacePath?: string;
+  code: string;
+  message: string;
+  severity: 'ERROR' | 'WARNING';
+}
+
+export interface CatalogValidationReport {
+  valid: boolean;
+  totalEntries: number;
+  validEntries: number;
+  issues: CatalogValidationIssue[];
 }

@@ -277,10 +277,12 @@ test('Test F - Current project absent: cwd does not belong to any cataloged proj
       gitInspector
     });
 
-    // Both the cataloged project and current cwd project are registered in registry
+    // Phase 6.1 Catalog Authority: When catalog is active, uncataloged CWD does NOT enter registry
+    // and currentProject is undefined.
     assert.ok(controlPlane.projectRegistry.hasProject('pubcoreagencia-cataloged-project'));
-    assert.equal(controlPlane.currentProject?.projectId, 'random-unknown');
-    assert.equal(controlPlane.projectRegistry.listProjects().length, 2);
+    assert.equal(controlPlane.projectRegistry.hasProject('random-unknown'), false);
+    assert.equal(controlPlane.currentProject, undefined);
+    assert.equal(controlPlane.projectRegistry.listProjects().length, 1);
   } finally {
     rmSync(wsCataloged, { recursive: true, force: true });
     rmSync(wsUncatalogedCwd, { recursive: true, force: true });

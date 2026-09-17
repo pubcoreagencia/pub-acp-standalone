@@ -76,28 +76,32 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
     await catalogLoader.loadAndRegister();
   }
 
-  // 5. Discover current workspace from Git
+  // 5. Discover current workspace from Git for context/focus
   let currentProject: ProjectDefinition | undefined;
   const resolution = resolver.resolveWorkspace(cwd);
 
   if (resolution.ok && resolution.context) {
     const ctx = resolution.context;
-    // Canonical ProjectDefinition derived strictly from resolution context
-    currentProject = {
-      projectId: ctx.projectId,
-      projectName: ctx.projectName,
-      workspacePath: path.resolve(ctx.workspacePath),
-      repository: ctx.repository,
-      defaultBranch: ctx.branch,
-      enabled: true,
-      validationPolicy: ctx.validationPolicy
-    };
+    const normalizedId = ctx.projectId.toLowerCase();
 
-    if (!projectRegistry.hasProject(currentProject.projectId)) {
+    if (projectRegistry.hasProject(normalizedId)) {
+      // Re-use authorized project definition from registry
+      currentProject = projectRegistry.getProject(normalizedId);
+    } else if (!projectCatalog) {
+      // Compatibility fallback ONLY when NO catalog is configured or active
+      currentProject = {
+        projectId: ctx.projectId,
+        projectName: ctx.projectName,
+        workspacePath: path.resolve(ctx.workspacePath),
+        repository: ctx.repository,
+        defaultBranch: ctx.branch,
+        enabled: true,
+        validationPolicy: ctx.validationPolicy
+      };
       projectRegistry.registerProject(currentProject);
     } else {
-      // Idempotent: reuse existing definition
-      currentProject = projectRegistry.getProject(currentProject.projectId)!;
+      // When catalog is active, uncataloged CWD does NOT get registered or authorized
+      currentProject = undefined;
     }
   }
 
