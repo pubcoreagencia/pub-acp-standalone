@@ -108,9 +108,11 @@ export function wireEventBusToRunStore(eventBus: IEventBus, runStore: IRunStore)
         break;
 
       case 'SAFETY_GATE_BLOCKED':
+      case 'WORKSPACE_LOCK_BLOCKED':
         runStore.updateState(event.runId, 'BLOCKED', {
           workspace: {
             ...run.workspace,
+            path: (event.details?.workspacePath as string) || run.workspace.path,
             expectedRepo: (event.details?.expectedRepo as string) || run.workspace.expectedRepo,
             actualRepo: (event.details?.actualRepo as string) || run.workspace.actualRepo
           }

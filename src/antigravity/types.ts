@@ -1,4 +1,4 @@
-﻿export type AntigravityExecutionStatus =
+export type AntigravityExecutionStatus =
   | 'IDLE'
   | 'DISPATCHING'
   | 'RUNNING'
@@ -53,4 +53,28 @@ export interface AntigravityPromptOptions {
   dangerouslySkipPermissions?: boolean;
   effort?: 'low' | 'medium' | 'high';
   model?: string;
+}
+
+export interface AgConversationSummary {
+  conversationId: string;
+  title: string;
+  preview: string;
+  status: string;
+  lastModifiedTime: string;
+  stepCount: number;
+}
+
+export interface IAntigravitySessionStore {
+  listConversationsForWorkspace(
+    workspacePath: string
+  ): Promise<AgConversationSummary[]>;
+
+  getConversation(
+    conversationId: string
+  ): Promise<AgConversationSummary | null>;
+
+  belongsToWorkspace(
+    conversationId: string,
+    workspacePath: string
+  ): Promise<boolean>;
 }

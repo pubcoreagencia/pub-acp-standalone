@@ -69,6 +69,7 @@ export class ClosedLoopEngine {
       stopCondition?: (agResponse: string, turn: number) => boolean;
       executionContext?: ExecutionContext;
       cwd?: string;
+      conversationId?: string;
     } = {}
   ): Promise<ClosedLoopRunReport> {
     const execCtx = options.executionContext || this.config.executionContext;
@@ -80,6 +81,7 @@ export class ClosedLoopEngine {
     const overallStartTime = Date.now();
     const effectiveCwd = options.cwd || execCtx?.workspacePath || this.config.cwd;
     const effectiveProject = execCtx?.projectName || this.config.projectName || 'ACP Standalone';
+    let effectiveConversationId = options.conversationId || execCtx?.conversationId;
 
     this.emitEvent({
       id: `evt-${randomUUID()}`,
@@ -139,7 +141,8 @@ export class ClosedLoopEngine {
         details: {
           requestId: gptRequestId,
           turn,
-          promptSnippet: gptPrompt.slice(0, 300)
+          promptSnippet: gptPrompt.slice(0, 300),
+          prompt: gptPrompt
         }
       });
 
@@ -219,7 +222,8 @@ export class ClosedLoopEngine {
         summary: `Turn ${turn}: Executing Antigravity instruction.`,
         details: {
           requestId: agRequestId,
-          instructionSnippet: instructionForAg.slice(0, 300)
+          instructionSnippet: instructionForAg.slice(0, 300),
+          instruction: instructionForAg
         }
       });
 
@@ -228,8 +232,13 @@ export class ClosedLoopEngine {
         cwd: effectiveCwd,
         effort: this.config.effort,
         model: this.config.model,
-        timeout_ms: this.config.defaultTimeoutMs
+        timeout_ms: this.config.defaultTimeoutMs,
+        conversation_id: effectiveConversationId
       });
+
+      if (agResult.conversation_id) {
+        effectiveConversationId = agResult.conversation_id;
+      }
 
       const agCompletedAt = new Date().toISOString();
       const agDurationMs = Date.now() - agStartTime;
@@ -245,7 +254,8 @@ export class ClosedLoopEngine {
         details: {
           status: agResult.status,
           durationMs: agDurationMs,
-          outputSnippet: agResult.response.slice(0, 300)
+          outputSnippet: agResult.response.slice(0, 300),
+          response: agResult.response
         }
       });
 

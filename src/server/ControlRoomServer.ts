@@ -6,6 +6,10 @@ import { IRunStore, MemoryRunStore } from '../observability/RunStore.js';
 import { DemoFeedGenerator } from '../observability/DemoFeed.js';
 import { wireEventBusToRunStore } from '../observability/wireEventBus.js';
 import { sanitizeObject } from '../observability/sanitizer.js';
+import { IProjectRegistry, ProjectRegistry } from '../multiproject/ProjectRegistry.js';
+import { IAntigravitySessionStore } from '../antigravity/types.js';
+import { AntigravitySessionStore } from '../antigravity/AntigravitySessionStore.js';
+import { IProjectDispatcher } from '../multiproject/ProjectDispatcher.js';
 
 export interface ControlRoomServerOptions {
   port?: number;
@@ -13,6 +17,9 @@ export interface ControlRoomServerOptions {
   publicDir?: string;
   eventBus?: IEventBus;
   runStore?: IRunStore;
+  projectRegistry?: IProjectRegistry;
+  sessionStore?: IAntigravitySessionStore;
+  dispatcher?: IProjectDispatcher;
 }
 
 export class ControlRoomServer {
@@ -21,6 +28,9 @@ export class ControlRoomServer {
   private readonly publicDir: string;
   private readonly eventBus: IEventBus;
   private readonly runStore: IRunStore;
+  private readonly projectRegistry: IProjectRegistry;
+  private readonly sessionStore: IAntigravitySessionStore;
+  private readonly dispatcher?: IProjectDispatcher;
   private readonly demoFeed: DemoFeedGenerator;
   private server?: Server;
   private readonly openSockets = new Set<import('node:net').Socket>();
@@ -31,6 +41,9 @@ export class ControlRoomServer {
     this.publicDir = options.publicDir || join(process.cwd(), 'public');
     this.eventBus = options.eventBus || new EventBus();
     this.runStore = options.runStore || new MemoryRunStore();
+    this.projectRegistry = options.projectRegistry || new ProjectRegistry();
+    this.sessionStore = options.sessionStore || new AntigravitySessionStore();
+    this.dispatcher = options.dispatcher;
 
     wireEventBusToRunStore(this.eventBus, this.runStore);
     this.demoFeed = new DemoFeedGenerator(this.eventBus, this.runStore);
@@ -94,6 +107,27 @@ export class ControlRoomServer {
     });
   }
 
+  private async readJsonBody(req: IncomingMessage): Promise<any> {
+    return new Promise((resolve, reject) => {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk;
+        if (body.length > 1024 * 1024) { // 1MB limit
+          reject(new Error('Payload too large'));
+        }
+      });
+      req.on('end', () => {
+        if (!body.trim()) return resolve({});
+        try {
+          resolve(JSON.parse(body));
+        } catch {
+          reject(new Error('Invalid JSON'));
+        }
+      });
+      req.on('error', err => reject(err));
+    });
+  }
+
   private sendJson(res: ServerResponse, statusCode: number, data: unknown): void {
     const sanitized = sanitizeObject(data);
     res.writeHead(statusCode, {
@@ -127,6 +161,136 @@ export class ControlRoomServer {
       return this.sendJson(res, 200, runs);
     }
 
+    // Dispatch Execution Route
+    if (pathname === '/api/runs' && method === 'POST') {
+      if (!this.dispatcher) {
+        return this.sendJson(res, 501, {
+          error: 'Dispatcher not configured on this ControlRoomServer instance.'
+        });
+      }
+
+      let body: any;
+      try {
+        body = await this.readJsonBody(req);
+      } catch (err: any) {
+        return this.sendJson(res, 400, { error: `Malformed request payload: ${err.message}` });
+      }
+
+      // 1. Validate projectId
+      if (!body.projectId || typeof body.projectId !== 'string' || !body.projectId.trim()) {
+        return this.sendJson(res, 400, { error: "Field 'projectId' is required and must be a non-empty string." });
+      }
+      const rawProjectId = body.projectId.trim().toLowerCase();
+
+      // Check project existence in sovereign registry
+      const project = this.projectRegistry.getProject(rawProjectId);
+      if (!project) {
+        return this.sendJson(res, 404, { error: `Project '${rawProjectId}' not found in ProjectRegistry.` });
+      }
+
+      // 2. Validate instruction
+      if (!body.instruction || typeof body.instruction !== 'string' || !body.instruction.trim()) {
+        return this.sendJson(res, 400, { error: "Field 'instruction' is required and must be a non-empty string." });
+      }
+      const instruction = body.instruction.trim();
+
+      // 3. Validate maxTurns (optional, must be integer between 1 and 20)
+      let maxTurns = 3;
+      if (body.maxTurns !== undefined && body.maxTurns !== null) {
+        if (typeof body.maxTurns !== 'number' || !Number.isInteger(body.maxTurns) || body.maxTurns < 1 || body.maxTurns > 20) {
+          return this.sendJson(res, 400, {
+            error: "Field 'maxTurns', when provided, must be an integer between 1 and 20."
+          });
+        }
+        maxTurns = body.maxTurns;
+      }
+
+      // 4. Validate conversationId (optional)
+      let conversationId: string | undefined;
+      if (body.conversationId !== undefined && body.conversationId !== null) {
+        if (typeof body.conversationId !== 'string' || !body.conversationId.trim()) {
+          return this.sendJson(res, 400, {
+            error: "Field 'conversationId', when provided, must be a non-empty string."
+          });
+        }
+        conversationId = body.conversationId.trim();
+      }
+
+      // 5. Create deterministic runId and register initial state in RunStore
+      const { randomUUID } = await import('node:crypto');
+      const runId = `run-${randomUUID()}`;
+
+      // Emit RUN_CREATED immediately via EventBus so RunStore and SSE are ready before response
+      this.eventBus.publish({
+        id: `evt-${randomUUID()}`,
+        runId,
+        timestamp: new Date().toISOString(),
+        type: 'RUN_CREATED',
+        summary: `Execution request received from Control Room UI for project '${project.projectId}'.`,
+        details: {
+          runId,
+          projectId: project.projectId,
+          projectName: project.projectName,
+          trigger: 'control-room-ui',
+          actor: 'operator',
+          conversationId
+        }
+      });
+
+      // 6. Launch dispatch asynchronously in the background (Non-blocking HTTP)
+      this.dispatcher.dispatch({
+        projectId: project.projectId,
+        initialPrompt: instruction,
+        runId,
+        maxTurns,
+        conversationId,
+        trigger: 'control-room-ui',
+        actor: 'operator',
+        skipRunCreated: true
+      }).catch(err => {
+        console.error(`[ControlRoomServer] Background dispatch error for run ${runId}:`, err);
+
+        // Fallback: Ensure run does not remain stuck in non-terminal state on unexpected exception
+        const currentRun = this.runStore.getRun(runId);
+        const terminalStates = ['COMPLETED', 'FAILED', 'BLOCKED', 'STOPPED'];
+        if (!currentRun || !terminalStates.includes(currentRun.status)) {
+          this.eventBus.publish({
+            id: `evt-${randomUUID()}`,
+            runId,
+            timestamp: new Date().toISOString(),
+            type: 'RUN_FAILED',
+            summary: `Execution failed due to unexpected dispatch exception: ${err?.message || String(err)}`,
+            details: {
+              runId,
+              projectId: project.projectId,
+              error: err?.message || String(err),
+              stack: err?.stack
+            }
+          });
+        }
+      });
+
+      // 7. Return 202 Accepted immediately
+      return this.sendJson(res, 202, {
+        runId,
+        status: 'STARTING',
+        projectId: project.projectId,
+        message: 'Execution run initiated'
+      });
+    }
+
+    // Projects Discovery Route (Safe, without internal filesystem paths)
+    if (pathname === '/api/projects' && method === 'GET') {
+      const projects = this.projectRegistry.listProjects().map(p => ({
+        projectId: p.projectId,
+        projectName: p.projectName,
+        repository: p.repository,
+        defaultBranch: p.defaultBranch,
+        enabled: p.enabled
+      }));
+      return this.sendJson(res, 200, projects);
+    }
+
     const runMatch = pathname.match(/^\/api\/runs\/([^\/]+)$/);
     if (runMatch && method === 'GET') {
       const runId = runMatch[1];
@@ -158,6 +322,30 @@ export class ControlRoomServer {
     if (pathname === '/api/demo/start' && method === 'POST') {
       const runId = this.demoFeed.generateDemoRun();
       return this.sendJson(res, 201, { message: 'Demo run initiated', runId });
+    }
+
+    // Project Conversations Discovery Route
+    const projConversationsMatch = pathname.match(/^\/api\/projects\/([^\/]+)\/conversations$/);
+    if (projConversationsMatch && method === 'GET') {
+      const rawProjectId = decodeURIComponent(projConversationsMatch[1]);
+      const project = this.projectRegistry.getProject(rawProjectId);
+
+      if (!project) {
+        return this.sendJson(res, 404, { error: `Project '${rawProjectId}' not found in registry.` });
+      }
+
+      try {
+        const conversations = await this.sessionStore.listConversationsForWorkspace(project.workspacePath);
+        return this.sendJson(res, 200, {
+          projectId: project.projectId,
+          conversations
+        });
+      } catch (err: any) {
+        console.error(`[ControlRoomServer] Failed to list conversations for project '${project.projectId}':`, err.message);
+        return this.sendJson(res, 500, {
+          error: `Failed to query conversations from Antigravity session storage: ${err.message}`
+        });
+      }
     }
 
     // Static Assets

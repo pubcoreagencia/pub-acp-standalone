@@ -112,3 +112,55 @@ test('ClosedLoopEngine - unit test gracefully stops on failure at AG step', asyn
   assert.equal(report.error?.where, 'antigravity');
   assert.equal(report.error?.code, 'EXEC_ERROR');
 });
+
+test('ClosedLoopEngine - propagates initial conversationId and maintains continuity across turns', async () => {
+  const sentAgConversationIds: Array<string | undefined> = [];
+
+  const mockGpt: IGptTransport = {
+    health: async () => ({ status: 'ok', initialized: true }),
+    createSession: () => 'gpt-session-1',
+    sendPrompt: async (prompt, opts) => ({
+      request_id: opts?.request_id || 'r1',
+      session_id: 'gpt-session-1',
+      status: 'COMPLETED',
+      text: 'Execute step 1',
+      duration_ms: 5
+    }),
+    continueSession: async (sess, prompt, opts) => ({
+      request_id: opts?.request_id || 'r2',
+      session_id: sess,
+      status: 'COMPLETED',
+      text: 'Execute step 2',
+      duration_ms: 5
+    })
+  };
+
+  const mockAg: IAntigravityTransport = {
+    health: async () => ({ status: 'ok', agyPath: 'mock' }),
+    sendPrompt: async (prompt, opts) => {
+      sentAgConversationIds.push(opts?.conversation_id);
+      return {
+        request_id: opts?.request_id || 'ag-req',
+        session_id: opts?.session_id || 'ag-sess',
+        conversation_id: opts?.conversation_id || 'conv-fallback-id',
+        status: 'COMPLETED',
+        response: 'Step executed',
+        duration_ms: 10
+      };
+    }
+  };
+
+  const engine = new ClosedLoopEngine(mockGpt, mockAg);
+  const report = await engine.runLoop('Goal in existing conversation', {
+    maxTurns: 2,
+    conversationId: 'conv-existing-1234'
+  });
+
+  assert.equal(report.status, 'COMPLETED');
+  assert.equal(report.total_turns, 2);
+  assert.equal(report.antigravity_conversation_id, 'conv-existing-1234');
+  assert.equal(sentAgConversationIds.length, 2);
+  assert.equal(sentAgConversationIds[0], 'conv-existing-1234', 'Turn 1 must receive the initial conversationId');
+  assert.equal(sentAgConversationIds[1], 'conv-existing-1234', 'Turn 2 must preserve the same conversationId');
+});
+

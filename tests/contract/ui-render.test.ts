@@ -28,6 +28,11 @@ test('Web UI Rendering Contract - Serves index.html, styles.css, app.js with req
     assert.ok(htmlText.includes('WORKSPACE'));
     assert.ok(htmlText.includes('PAUSE (UNAVAILABLE)'));
     assert.ok(htmlText.includes('STOP (UNAVAILABLE)'));
+    assert.ok(htmlText.includes('NOVA EXECUÇÃO'));
+    assert.ok(htmlText.includes('select-project'));
+    assert.ok(htmlText.includes('select-conversation'));
+    assert.ok(htmlText.includes('input-instruction'));
+    assert.ok(htmlText.includes('btn-dispatch'));
 
     // 2. GET /styles.css
     const resCss = await fetch(`${url}/styles.css`);
@@ -36,6 +41,8 @@ test('Web UI Rendering Contract - Serves index.html, styles.css, app.js with req
     const cssText = await resCss.text();
     assert.ok(cssText.includes('.timeline-panel'));
     assert.ok(cssText.includes('.state-pill'));
+    assert.ok(cssText.includes('.dispatch-panel'));
+    assert.ok(cssText.includes('.btn-primary'));
 
     // 3. GET /app.js
     const resJs = await fetch(`${url}/app.js`);
@@ -45,6 +52,8 @@ test('Web UI Rendering Contract - Serves index.html, styles.css, app.js with req
     assert.ok(jsText.includes('fetchRuns'));
     assert.ok(jsText.includes('connectSSE'));
     assert.ok(jsText.includes('renderRunDetail'));
+    assert.ok(jsText.includes('loadProjects'));
+    assert.ok(jsText.includes('loadConversations'));
   } finally {
     await server.stop();
   }

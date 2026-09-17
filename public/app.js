@@ -1,41 +1,31 @@
 let currentRunId = null;
 let activeEventSource = null;
 let runsMap = new Map();
+let currentRunEvents = [];
 
-// Elements
+// DOM Elements - Main UI
 const elConnectionStatus = document.getElementById('connection-status');
 const elDemoBadge = document.getElementById('demo-badge');
 const elRunsList = document.getElementById('runs-list');
 const elRunsCount = document.getElementById('runs-count');
 const elBtnStartDemo = document.getElementById('btn-start-demo');
 
-const elMetricRunId = document.getElementById('metric-run-id');
-const elMetricProject = document.getElementById('metric-project');
-const elMetricProjectId = document.getElementById('metric-project-id');
-const elMetricTaskId = document.getElementById('metric-task-id');
-const elMetricState = document.getElementById('metric-state');
-const elMetricDuration = document.getElementById('metric-duration');
-const elMetricGptTurns = document.getElementById('metric-gpt-turns');
-const elMetricAgExecutions = document.getElementById('metric-ag-executions');
-const elMetricCorrections = document.getElementById('metric-corrections');
-const elMetricDeployStatus = document.getElementById('metric-deploy-status');
+// Header Status
+const elHeaderStatusPill = document.getElementById('header-status-pill');
+const elHeaderStatusText = document.getElementById('header-status-text');
 
-const elTimeline = document.getElementById('events-timeline');
+// Hero Bar Elements
+const elHeroProjectTitle = document.getElementById('hero-project-title');
+const elHeroDemoTag = document.getElementById('hero-demo-tag');
+const elHeroRunId = document.getElementById('hero-run-id');
+const elHeroTaskId = document.getElementById('hero-task-id');
+const elHeroDuration = document.getElementById('hero-duration');
+const elHeroStateVal = document.getElementById('hero-state-val');
 
-const elGptTimestamp = document.getElementById('gpt-timestamp');
-const elGptLastDecision = document.getElementById('gpt-last-decision');
-const elGptContext = document.getElementById('gpt-context');
-const elGptAnalyzed = document.getElementById('gpt-analyzed');
-const elGptNextAction = document.getElementById('gpt-next-action');
+// Flow Container
+const elConversationFlow = document.getElementById('conversation-flow');
 
-const elAgStatusPill = document.getElementById('ag-status-pill');
-const elAgCurrentExec = document.getElementById('ag-current-exec');
-const elAgDuration = document.getElementById('ag-duration');
-const elAgCommand = document.getElementById('ag-command');
-const elAgStdout = document.getElementById('ag-stdout');
-const elAgChangedFiles = document.getElementById('ag-changed-files');
-
-const elValLastRun = document.getElementById('validation-last-run');
+// Technical Details & Matrix Elements
 const elValBuild = document.getElementById('val-build');
 const elValUnit = document.getElementById('val-unit');
 const elValIntegration = document.getElementById('val-integration');
@@ -48,14 +38,46 @@ const elDeployUrl = document.getElementById('deploy-url');
 const elDeployHttpStatus = document.getElementById('deploy-http-status');
 const elDeployTime = document.getElementById('deploy-time');
 
-const elWsGitStatus = document.getElementById('ws-git-status');
 const elWsPath = document.getElementById('ws-path');
-const elWsExpectedRepo = document.getElementById('ws-expected-repo');
 const elWsActualRepo = document.getElementById('ws-actual-repo');
 const elWsBranch = document.getElementById('ws-branch');
 const elWsLastCommit = document.getElementById('ws-last-commit');
+const elWsGitStatus = document.getElementById('ws-git-status');
 
-// API helpers
+const elMetricGptTurns = document.getElementById('metric-gpt-turns');
+const elMetricAgExecutions = document.getElementById('metric-ag-executions');
+const elMetricCorrections = document.getElementById('metric-corrections');
+
+// Compatibility elements (hidden, used by existing test assertions)
+const elMetricRunId = document.getElementById('metric-run-id');
+const elMetricProject = document.getElementById('metric-project');
+const elMetricProjectId = document.getElementById('metric-project-id');
+const elMetricTaskId = document.getElementById('metric-task-id');
+const elMetricState = document.getElementById('metric-state');
+const elMetricDuration = document.getElementById('metric-duration');
+const elMetricDeployStatus = document.getElementById('metric-deploy-status');
+const elTimeline = document.getElementById('events-timeline');
+
+const statusLabelsPt = {
+  'IDLE': 'AGUARDANDO',
+  'STARTING': 'INICIANDO',
+  'GPT_THINKING': 'GPT PENSANDO',
+  'AG_RUNNING': 'AG EXECUTANDO',
+  'VALIDATING': 'VALIDANDO',
+  'WAITING': 'AGUARDANDO',
+  'DEPLOYING': 'FAZENDO DEPLOY',
+  'COMPLETED': 'CONCLUÍDO',
+  'FAILED': 'FALHOU',
+  'NOT_AVAILABLE': 'NÃO DISPONÍVEL'
+};
+
+function translateStatus(stat) {
+  if (!stat) return 'AGUARDANDO';
+  const upper = String(stat).toUpperCase();
+  return statusLabelsPt[upper] || upper;
+}
+
+// API Functions
 async function fetchRuns() {
   try {
     const res = await fetch('/api/runs');
@@ -80,17 +102,17 @@ async function fetchRunDetail(runId) {
     runsMap.set(run.runId, run);
     renderRunDetail(run);
   } catch (err) {
-    console.error('Failed to load run detail:', err);
+    console.error('Falha ao carregar detalhes da execução:', err);
   }
 }
 
 function setConnectionState(state) {
   if (state === 'LIVE') {
     elConnectionStatus.className = 'status-indicator live';
-    elConnectionStatus.querySelector('.status-text').textContent = 'LIVE';
+    elConnectionStatus.querySelector('.status-text').textContent = 'CONECTADO';
   } else {
     elConnectionStatus.className = 'status-indicator disconnected';
-    elConnectionStatus.querySelector('.status-text').textContent = 'DISCONNECTED';
+    elConnectionStatus.querySelector('.status-text').textContent = 'DESCONECTADO';
   }
 }
 
@@ -100,7 +122,7 @@ function updateRunsList(runs) {
   elRunsCount.textContent = runs.length;
 
   if (runs.length === 0) {
-    elRunsList.innerHTML = '<div class="empty-state">No runs recorded yet. Click "Start Demo Run" or trigger ClosedLoopEngine.</div>';
+    elRunsList.innerHTML = '<div class="empty-state">Nenhuma execução registrada. Clique em "Simular Demo" para testar o fluxo.</div>';
     return;
   }
 
@@ -111,18 +133,19 @@ function updateRunsList(runs) {
     card.onclick = () => selectRun(run.runId);
 
     const isDemo = run.isDemo || (run.runId && run.runId.indexOf('DEMO') === 0);
-    const stateClass = (run.status || 'idle').toLowerCase();
-    const projLabel = run.projectName || run.project || 'N/A';
+    const rawStatus = run.status || 'IDLE';
+    const stateClass = rawStatus.toLowerCase();
+    const projLabel = run.projectName || run.project || 'Projeto Sem Nome';
 
     card.innerHTML =
       '<div class="run-card-header">' +
         '<span class="run-card-id monospace">' + escapeHtml(run.runId) + '</span>' +
-        '<span class="state-pill ' + stateClass + '">' + escapeHtml(run.status) + '</span>' +
+        '<span class="state-pill ' + stateClass + '">' + escapeHtml(translateStatus(rawStatus)) + '</span>' +
       '</div>' +
-      '<div class="run-card-project">' + escapeHtml(projLabel) + (isDemo ? ' <span class="badge">DEMO</span>' : '') + '</div>' +
+      '<div class="run-card-project">' + escapeHtml(projLabel) + (isDemo ? ' <span class="badge-demo-tag">DEMO</span>' : '') + '</div>' +
       '<div class="run-card-meta">' +
-        '<span>' + formatDuration(run.durationMs) + '</span>' +
-        '<span>Turns: ' + (run.gptTurns || 0) + '</span>' +
+        '<span>⏱️ ' + formatDuration(run.durationMs) + '</span>' +
+        '<span>Turnos: ' + (run.gptTurns || 0) + '</span>' +
       '</div>';
     elRunsList.appendChild(card);
   });
@@ -131,6 +154,7 @@ function updateRunsList(runs) {
 function selectRun(runId) {
   if (currentRunId === runId && activeEventSource) return;
   currentRunId = runId;
+  currentRunEvents = [];
 
   document.querySelectorAll('.run-card').forEach(card => {
     const idEl = card.querySelector('.run-card-id');
@@ -146,7 +170,12 @@ function connectSSE(runId) {
     activeEventSource.close();
   }
 
-  elTimeline.innerHTML = '';
+  elConversationFlow.innerHTML =
+    '<div class="flow-empty-state">' +
+      '<div class="empty-icon">⏳</div>' +
+      '<div class="empty-text">Aguardando eventos do fluxo...</div>' +
+    '</div>';
+
   const sseUrl = '/api/runs/' + encodeURIComponent(runId) + '/stream';
   activeEventSource = new EventSource(sseUrl);
 
@@ -157,10 +186,10 @@ function connectSSE(runId) {
   activeEventSource.onmessage = (e) => {
     try {
       const event = JSON.parse(e.data);
-      appendTimelineEvent(event);
+      appendFlowEvent(event);
       fetchRunDetail(runId);
     } catch (err) {
-      console.error('Failed to parse SSE event:', err);
+      console.error('Falha ao processar evento SSE:', err);
     }
   };
 
@@ -169,125 +198,319 @@ function connectSSE(runId) {
   };
 }
 
-function appendTimelineEvent(event) {
-  const existing = document.getElementById('evt-' + event.id);
-  if (existing) return;
+function appendFlowEvent(event) {
+  // Prevent duplicate events
+  if (currentRunEvents.some(e => e.id === event.id)) return;
+  currentRunEvents.push(event);
 
-  const placeholder = elTimeline.querySelector('.timeline-empty');
-  if (placeholder) placeholder.remove();
+  // Remove empty state
+  const emptyPlaceholder = elConversationFlow.querySelector('.flow-empty-state');
+  if (emptyPlaceholder) emptyPlaceholder.remove();
 
-  const entry = document.createElement('div');
-  entry.id = 'evt-' + event.id;
-  entry.className = 'event-entry event-' + event.type;
+  // Route event into Turn Group or standalone card
+  const turn = event.turn || 0;
+  let turnBlock = null;
 
-  const timeStr = event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : '';
-  const turnBadge = event.turn ? '<span class="event-turn-badge">T' + event.turn + '</span>' : '';
-  const detailsJson = event.details ? JSON.stringify(event.details, null, 2) : '';
+  if (turn > 0) {
+    const turnBlockId = 'flow-turn-' + turn;
+    turnBlock = document.getElementById(turnBlockId);
+    if (!turnBlock) {
+      turnBlock = document.createElement('div');
+      turnBlock.id = turnBlockId;
+      turnBlock.className = 'turn-block';
+      turnBlock.innerHTML =
+        '<div class="turn-header">' +
+          '<span class="turn-label">TURNO ' + turn + '</span>' +
+          '<span class="turn-timestamp monospace">' + formatTime(event.timestamp) + '</span>' +
+        '</div>' +
+        '<div class="turn-body" id="turn-body-' + turn + '"></div>';
+      elConversationFlow.appendChild(turnBlock);
+    }
+  }
 
-  entry.innerHTML =
-    '<div class="event-header">' +
-      '<div>' +
-        '<span class="event-badge">' + event.type + '</span>' +
-        turnBadge +
-      '</div>' +
-      '<span class="event-time">' + timeStr + '</span>' +
-    '</div>' +
-    '<div class="event-summary">' + escapeHtml(event.summary || '') + '</div>' +
-    (detailsJson ?
-      '<button class="event-details-toggle" onclick="toggleDetails(this)">▶ View Details</button>' +
-      '<div class="event-details-box" style="display: none;">' + escapeHtml(detailsJson) + '</div>'
-      : '');
+  const container = turn > 0
+    ? document.getElementById('turn-body-' + turn)
+    : elConversationFlow;
 
-  elTimeline.appendChild(entry);
-  elTimeline.scrollTop = elTimeline.scrollHeight;
+  const card = createCardForEvent(event);
+  if (card && container) {
+    container.appendChild(card);
+    elConversationFlow.scrollTop = elConversationFlow.scrollHeight;
+  }
 }
 
-window.toggleDetails = function(btn) {
-  const box = btn.nextElementSibling;
-  if (box.style.display === 'none') {
-    box.style.display = 'block';
-    btn.textContent = '▼ Hide Details';
-  } else {
-    box.style.display = 'none';
-    btn.textContent = '▶ View Details';
+function createCardForEvent(event) {
+  const card = document.createElement('div');
+  const timeStr = formatTime(event.timestamp);
+
+  switch (event.type) {
+    case 'GPT_DECISION': {
+      card.className = 'flow-card flow-card-gpt';
+      const promptText = (event.details && (event.details.prompt || event.details.promptSnippet)) || event.summary;
+      const reasoning = event.details && event.details.reasoning ? ('\n\nMotivo: ' + event.details.reasoning) : '';
+      const fullText = promptText + reasoning;
+
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title">🧠 GPT → Antigravity</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>' +
+        '<div class="code-container">' +
+          '<pre class="code-block" id="cb-' + event.id + '">' + escapeHtml(fullText) + '</pre>' +
+          '<div class="flow-actions">' +
+            '<button class="flow-btn-link" onclick="toggleExpandCode(\'cb-' + event.id + '\', this)">📖 Ver mensagem completa</button>' +
+            '<button class="flow-btn-link" onclick="copyCode(\'cb-' + event.id + '\')">📋 Copiar</button>' +
+          '</div>' +
+        '</div>';
+      return card;
+    }
+
+    case 'AG_STARTED': {
+      card.className = 'flow-card flow-card-ag';
+      const instructionText = (event.details && (event.details.instruction || event.details.instructionSnippet)) || event.summary;
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title">🤖 AG Iniciou Execução</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>' +
+        '<div class="code-container">' +
+          '<pre class="code-block" id="cb-' + event.id + '">' + escapeHtml(instructionText) + '</pre>' +
+          '<div class="flow-actions">' +
+            '<button class="flow-btn-link" onclick="toggleExpandCode(\'cb-' + event.id + '\', this)">📖 Ver instrução completa</button>' +
+            '<button class="flow-btn-link" onclick="copyCode(\'cb-' + event.id + '\')">📋 Copiar</button>' +
+          '</div>' +
+        '</div>';
+      return card;
+    }
+
+    case 'AG_OUTPUT':
+    case 'AG_FINISHED': {
+      card.className = 'flow-card flow-card-ag';
+      const responseText = (event.details && (event.details.response || event.details.outputSnippet)) || event.summary;
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title">🤖 AG → Resposta do Agente</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>' +
+        '<div class="code-container">' +
+          '<pre class="code-block" id="cb-' + event.id + '">' + escapeHtml(responseText) + '</pre>' +
+          '<div class="flow-actions">' +
+            '<button class="flow-btn-link" onclick="toggleExpandCode(\'cb-' + event.id + '\', this)">📖 Ver resposta completa</button>' +
+            '<button class="flow-btn-link" onclick="copyCode(\'cb-' + event.id + '\')">📋 Copiar</button>' +
+          '</div>' +
+        '</div>';
+      return card;
+    }
+
+    case 'VALIDATION_STARTED': {
+      card.className = 'flow-card';
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title" style="color: var(--accent-cyan)">🔎 Validação Iniciada</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>';
+      return card;
+    }
+
+    case 'VALIDATION_RESULT': {
+      const isFail = event.summary.toLowerCase().includes('failed') ||
+        (event.details && (event.details.build === 'FAIL' || event.details.unit === 'FAIL'));
+      card.className = 'flow-card ' + (isFail ? 'flow-card-val-fail' : 'flow-card-val-pass');
+      const errInfo = (event.details && event.details.error) ? ('\n' + event.details.error) : '';
+
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title">' + (isFail ? '❌ Validação com Falha' : '✅ Validação Aprovada') + '</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary + errInfo) + '</div>';
+      return card;
+    }
+
+    case 'GPT_REVIEW': {
+      card.className = 'flow-card flow-card-gpt';
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title">🧠 GPT Analisou Problema</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>';
+      return card;
+    }
+
+    case 'CORRECTION': {
+      card.className = 'flow-card flow-card-correction';
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title">🔧 Correção Solicitada</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>';
+      return card;
+    }
+
+    case 'DEPLOY_STARTED':
+    case 'DEPLOY_RESULT': {
+      card.className = 'flow-card flow-card-deploy';
+      const isSuccess = event.type === 'DEPLOY_RESULT' && !event.summary.toLowerCase().includes('fail');
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title">🚀 ' + (isSuccess ? 'Deploy Concluído' : 'Processo de Deploy') + '</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>';
+      return card;
+    }
+
+    case 'RUN_STARTED': {
+      card.className = 'flow-card';
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title" style="color: var(--accent-cyan)">🏁 Início da Execução</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>';
+      return card;
+    }
+
+    case 'RUN_COMPLETED': {
+      card.className = 'flow-card flow-card-val-pass';
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title">🎉 Execução Concluída com Sucesso</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>';
+      return card;
+    }
+
+    case 'RUN_FAILED': {
+      card.className = 'flow-card flow-card-val-fail';
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title">💥 Execução Encerrada com Falha</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>';
+      return card;
+    }
+
+    default: {
+      card.className = 'flow-card';
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title">' + escapeHtml(event.type) + '</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary || '') + '</div>';
+      return card;
+    }
   }
+}
+
+window.toggleExpandCode = function(preId, btn) {
+  const pre = document.getElementById(preId);
+  if (!pre) return;
+  if (pre.classList.contains('expanded')) {
+    pre.classList.remove('expanded');
+    btn.textContent = '📖 Ver mensagem completa';
+  } else {
+    pre.classList.add('expanded');
+    btn.textContent = '▲ Recolher';
+  }
+};
+
+window.copyCode = function(preId) {
+  const pre = document.getElementById(preId);
+  if (!pre) return;
+  navigator.clipboard.writeText(pre.innerText).then(() => {
+    alert('Copiado para a área de transferência!');
+  }).catch(() => {});
 };
 
 function renderRunDetail(run) {
   if (!run) return;
 
-  if (run.isDemo || (run.runId && run.runId.indexOf('DEMO') === 0)) {
+  const isDemo = run.isDemo || (run.runId && run.runId.indexOf('DEMO') === 0);
+  if (isDemo) {
     elDemoBadge.classList.remove('hidden');
+    elHeroDemoTag.classList.remove('hidden');
   } else {
     elDemoBadge.classList.add('hidden');
+    elHeroDemoTag.classList.add('hidden');
   }
 
-  elMetricRunId.textContent = run.runId || 'N/A';
-  elMetricProject.textContent = run.projectName || run.project || 'N/A';
-  if (elMetricProjectId) elMetricProjectId.textContent = run.projectId || 'N/A';
-  if (elMetricTaskId) elMetricTaskId.textContent = run.taskId || 'N/A';
-  elMetricState.textContent = run.status || 'IDLE';
-  elMetricState.className = 'state-pill ' + (run.status || 'idle').toLowerCase();
-  elMetricDuration.textContent = formatDuration(run.durationMs);
-  elMetricGptTurns.textContent = run.gptTurns || 0;
-  elMetricAgExecutions.textContent = run.agExecutions || 0;
-  elMetricCorrections.textContent = run.corrections || 0;
-  
-  const deployStat = (run.deployStatus && run.deployStatus.status) || 'NOT_AVAILABLE';
-  elMetricDeployStatus.textContent = deployStat;
-  elMetricDeployStatus.className = 'state-pill ' + deployStat.toLowerCase().replace('_', '-');
+  // Header and Hero Bar
+  const rawStatus = run.status || 'IDLE';
+  const statusPt = translateStatus(rawStatus);
+  const statusClass = rawStatus.toLowerCase();
 
-  const gpt = run.gptView || {};
-  elGptTimestamp.textContent = gpt.timestamp && gpt.timestamp !== 'NOT_AVAILABLE'
-    ? new Date(gpt.timestamp).toLocaleTimeString()
-    : 'NOT_AVAILABLE';
-  elGptLastDecision.textContent = gpt.lastDecision || 'NOT_AVAILABLE';
-  elGptContext.textContent = gpt.contextSummary || 'NOT_AVAILABLE';
-  elGptAnalyzed.textContent = gpt.analyzedResult || 'NOT_AVAILABLE';
-  elGptNextAction.textContent = gpt.nextAction || 'NOT_AVAILABLE';
+  // Header live pill
+  elHeaderStatusPill.className = 'header-status-pill ' + statusClass;
+  elHeaderStatusText.textContent = statusPt;
 
-  const ag = run.agView || {};
-  elAgStatusPill.textContent = ag.status || 'IDLE';
-  elAgStatusPill.className = 'state-pill ' + (ag.status || 'idle').toLowerCase();
-  elAgCurrentExec.textContent = ag.currentExecution || 'NOT_AVAILABLE';
-  elAgDuration.textContent = ag.durationMs !== 'NOT_AVAILABLE' && typeof ag.durationMs === 'number'
-    ? (ag.durationMs / 1000).toFixed(1) + 's'
-    : 'NOT_AVAILABLE';
-  elAgCommand.textContent = ag.commandOrAction || 'NOT_AVAILABLE';
-  elAgStdout.textContent = ag.stdoutSummary || 'NOT_AVAILABLE';
-  elAgChangedFiles.textContent = (ag.changedFiles && ag.changedFiles.length > 0)
-    ? ag.changedFiles.join(', ')
-    : 'None';
+  // Hero Bar
+  elHeroProjectTitle.textContent = run.projectName || run.project || 'Projeto Sem Nome';
+  elHeroRunId.textContent = run.runId || 'N/A';
+  elHeroTaskId.textContent = run.taskId || 'N/A';
+  elHeroDuration.textContent = formatDuration(run.durationMs);
 
+  elHeroStateVal.className = 'state-pill ' + statusClass;
+  elHeroStateVal.textContent = statusPt;
+
+  // Render events if available from run detail and not yet loaded
+  if (Array.isArray(run.events) && run.events.length > 0 && currentRunEvents.length === 0) {
+    run.events.forEach(evt => appendFlowEvent(evt));
+  }
+
+  // Technical Details & Matrix
   const val = run.tests || {};
-  elValLastRun.textContent = val.lastRunAt && val.lastRunAt !== 'NOT_AVAILABLE'
-    ? new Date(val.lastRunAt).toLocaleTimeString()
-    : 'NOT_AVAILABLE';
   setMatrixPill(elValBuild, val.build);
   setMatrixPill(elValUnit, val.unit);
   setMatrixPill(elValIntegration, val.integration);
   setMatrixPill(elValE2e, val.e2e);
   setMatrixPill(elValSmoke, val.smoke);
-  elValDetails.textContent = val.details || 'No validation reports recorded.';
+  elValDetails.textContent = val.details || 'Nenhum relatório de validação.';
 
   const dep = run.deployStatus || {};
   setMatrixPill(elDeployPill, dep.status);
-  elDeployUrl.textContent = dep.publicUrl || 'NOT_AVAILABLE';
-  elDeployHttpStatus.textContent = dep.httpStatus || 'NOT_AVAILABLE';
+  elDeployUrl.textContent = dep.publicUrl || 'N/A';
+  elDeployHttpStatus.textContent = dep.httpStatus || 'N/A';
   elDeployTime.textContent = dep.lastDeploy && dep.lastDeploy !== 'NOT_AVAILABLE'
-    ? new Date(dep.lastDeploy).toLocaleTimeString()
-    : 'NOT_AVAILABLE';
+    ? formatTime(dep.lastDeploy)
+    : 'N/A';
 
   const ws = run.workspace || {};
-  elWsPath.textContent = ws.path || 'NOT_AVAILABLE';
-  if (elWsExpectedRepo) elWsExpectedRepo.textContent = ws.expectedRepo || 'NOT_AVAILABLE';
-  if (elWsActualRepo) elWsActualRepo.textContent = ws.actualRepo || 'NOT_AVAILABLE';
-  if (elWsBranch) elWsBranch.textContent = ws.branch || 'NOT_AVAILABLE';
-  elWsGitStatus.textContent = (ws.gitStatus || 'clean').toUpperCase();
-  elWsLastCommit.textContent = ws.lastCommit || 'NOT_AVAILABLE';
+  elWsPath.textContent = ws.path || 'N/A';
+  if (elWsActualRepo) elWsActualRepo.textContent = ws.actualRepo || 'N/A';
+  if (elWsBranch) elWsBranch.textContent = ws.branch || 'N/A';
+  if (elWsGitStatus) elWsGitStatus.textContent = (ws.gitStatus || 'clean').toUpperCase();
+  if (elWsLastCommit) elWsLastCommit.textContent = ws.lastCommit || 'N/A';
+
+  // Metrics Bar
+  elMetricGptTurns.textContent = run.gptTurns || 0;
+  elMetricAgExecutions.textContent = run.agExecutions || 0;
+  elMetricCorrections.textContent = run.corrections || 0;
+
+  // Sync hidden compatibility elements for existing test contracts
+  if (elMetricRunId) elMetricRunId.textContent = run.runId || '';
+  if (elMetricProject) elMetricProject.textContent = run.projectName || run.project || '';
+  if (elMetricProjectId) elMetricProjectId.textContent = run.projectId || '';
+  if (elMetricTaskId) elMetricTaskId.textContent = run.taskId || '';
+  if (elMetricState) {
+    elMetricState.textContent = rawStatus;
+    elMetricState.className = 'state-pill ' + statusClass;
+  }
+  if (elMetricDuration) elMetricDuration.textContent = formatDuration(run.durationMs);
+  if (elMetricDeployStatus) elMetricDeployStatus.textContent = (run.deployStatus && run.deployStatus.status) || 'NOT_AVAILABLE';
 }
 
 function setMatrixPill(el, status) {
+  if (!el) return;
   const stat = status || 'NOT_AVAILABLE';
   el.textContent = stat;
   el.className = 'matrix-pill ' + stat.toLowerCase().replace('_', '-');
@@ -299,10 +522,31 @@ function formatDuration(ms) {
   return seconds + 's';
 }
 
-function escapeHtml(str) {
-  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function formatTime(iso) {
+  if (!iso || iso === 'NOT_AVAILABLE') return '';
+  try {
+    return new Date(iso).toLocaleTimeString('pt-BR');
+  } catch (e) {
+    return String(iso);
+  }
 }
 
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// Dispatch Form Elements
+const elDispatchForm = document.getElementById('dispatch-form');
+const elSelectProject = document.getElementById('select-project');
+const elSelectConversation = document.getElementById('select-conversation');
+const elInputInstruction = document.getElementById('input-instruction');
+const elBtnDispatch = document.getElementById('btn-dispatch');
+const elDispatchFeedback = document.getElementById('dispatch-feedback');
+
+// Start Demo Click
 elBtnStartDemo.onclick = async () => {
   try {
     elBtnStartDemo.disabled = true;
@@ -311,11 +555,159 @@ elBtnStartDemo.onclick = async () => {
     await fetchRuns();
     selectRun(data.runId);
   } catch (err) {
-    alert('Failed to start demo: ' + err.message);
+    alert('Falha ao iniciar simulação demo: ' + err.message);
   } finally {
     setTimeout(() => { elBtnStartDemo.disabled = false; }, 1000);
   }
 };
 
+// --- Dispatch Form Integration ---
+
+async function loadProjects() {
+  if (!elSelectProject) return;
+  try {
+    const res = await fetch('/api/projects');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const projects = await res.json();
+
+    elSelectProject.innerHTML = '<option value="">Selecione um projeto...</option>';
+    projects.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.projectId;
+      const branchInfo = p.defaultBranch ? ` (${p.defaultBranch})` : '';
+      opt.textContent = `${p.projectName || p.projectId}${branchInfo}`;
+      elSelectProject.appendChild(opt);
+    });
+
+    if (projects.length === 1) {
+      elSelectProject.value = projects[0].projectId;
+      loadConversations(projects[0].projectId);
+    }
+  } catch (err) {
+    console.error('Falha ao carregar lista de projetos:', err);
+    showDispatchFeedback('Falha ao carregar projetos registrados.', 'error');
+  }
+}
+
+async function loadConversations(projectId) {
+  if (!elSelectConversation) return;
+  elSelectConversation.innerHTML = '<option value="">-- Nova conversation (padrão) --</option>';
+
+  if (!projectId) {
+    elSelectConversation.disabled = true;
+    return;
+  }
+
+  elSelectConversation.disabled = true;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/conversations`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const conversations = await res.json();
+
+    if (conversations && conversations.length > 0) {
+      conversations.forEach(conv => {
+        const opt = document.createElement('option');
+        opt.value = conv.conversationId;
+        const preview = conv.title || conv.summarySnippet || (conv.conversationId.slice(0, 8) + '...');
+        const updated = conv.updatedAt ? ` (${formatTime(conv.updatedAt)})` : '';
+        opt.textContent = `${preview}${updated}`;
+        elSelectConversation.appendChild(opt);
+      });
+    }
+  } catch (err) {
+    console.warn('Falha ao buscar conversations do projeto:', err);
+  } finally {
+    elSelectConversation.disabled = false;
+  }
+}
+
+function showDispatchFeedback(msg, type = 'info') {
+  if (!elDispatchFeedback) return;
+  elDispatchFeedback.textContent = msg;
+  elDispatchFeedback.className = 'dispatch-feedback ' + type;
+}
+
+function clearDispatchFeedback() {
+  if (!elDispatchFeedback) return;
+  elDispatchFeedback.textContent = '';
+  elDispatchFeedback.className = 'dispatch-feedback';
+}
+
+if (elSelectProject) {
+  elSelectProject.addEventListener('change', (e) => {
+    clearDispatchFeedback();
+    loadConversations(e.target.value);
+  });
+}
+
+if (elDispatchForm) {
+  elDispatchForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearDispatchFeedback();
+
+    const projectId = elSelectProject ? elSelectProject.value.trim() : '';
+    const conversationId = elSelectConversation ? elSelectConversation.value.trim() : '';
+    const instruction = elInputInstruction ? elInputInstruction.value.trim() : '';
+
+    if (!projectId) {
+      showDispatchFeedback('Por favor, selecione um projeto.', 'error');
+      return;
+    }
+
+    if (!instruction) {
+      showDispatchFeedback('Por favor, digite uma instrução para o Antigravity.', 'error');
+      return;
+    }
+
+    // Double-submit protection
+    if (elBtnDispatch) {
+      elBtnDispatch.disabled = true;
+      elBtnDispatch.textContent = 'DISPATCHING...';
+    }
+
+    try {
+      const payload = {
+        projectId,
+        instruction
+      };
+      if (conversationId) {
+        payload.conversationId = conversationId;
+      }
+
+      const res = await fetch('/api/runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const body = await res.json().catch(() => ({}));
+
+      if (res.status === 202) {
+        showDispatchFeedback(`Execução aceita! Run ID: ${body.runId}`, 'success');
+        if (elInputInstruction) elInputInstruction.value = '';
+
+        // Immediate refresh and selection
+        await fetchRuns();
+        if (body.runId) {
+          selectRun(body.runId);
+        }
+      } else if (res.status === 409) {
+        showDispatchFeedback(`Bloqueado: ${body.error || 'Workspace já em execução.'}`, 'error');
+      } else {
+        showDispatchFeedback(`Erro (${res.status}): ${body.error || 'Falha ao despachar execução.'}`, 'error');
+      }
+    } catch (err) {
+      showDispatchFeedback(`Erro de rede ao despachar: ${err.message}`, 'error');
+    } finally {
+      if (elBtnDispatch) {
+        elBtnDispatch.disabled = false;
+        elBtnDispatch.textContent = 'DISPARAR EXECUÇÃO';
+      }
+    }
+  });
+}
+
+// Initializations
+loadProjects();
 fetchRuns();
 setInterval(fetchRuns, 5000);

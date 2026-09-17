@@ -70,6 +70,7 @@ async function main() {
     }
 
     if (command === 'control-room') {
+      const { createControlPlane } = await import('../bootstrap/createControlPlane.js');
       const { ControlRoomServer } = await import('../server/ControlRoomServer.js');
       let port = 5173;
       let host = '127.0.0.1';
@@ -84,12 +85,27 @@ async function main() {
         }
       }
 
-      const server = new ControlRoomServer({ port, host });
+      const controlPlane = await createControlPlane();
+      const server = new ControlRoomServer({
+        port,
+        host,
+        dispatcher: controlPlane.dispatcher,
+        projectRegistry: controlPlane.projectRegistry,
+        sessionStore: controlPlane.sessionStore,
+        eventBus: controlPlane.eventBus,
+        runStore: controlPlane.runStore
+      });
       const info = await server.start();
       console.log('==================================================');
       console.log('PUB ACP CONTROL ROOM');
       console.log('==================================================');
       console.log(`Control Room listening at: ${info.url}`);
+      if (controlPlane.currentProject) {
+        console.log(`Registered project:        ${controlPlane.currentProject.projectId} (${controlPlane.currentProject.projectName})`);
+        console.log(`Workspace:                 ${controlPlane.currentProject.workspacePath}`);
+      } else {
+        console.log('Warning: No git workspace detected at current working directory.');
+      }
       console.log('Open your browser to observe ClosedLoopEngine runs.');
       console.log('Press Ctrl+C to stop.');
       return;

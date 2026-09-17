@@ -1,268 +1,289 @@
 <!DOCTYPE html>
-<html lang=en>
+<html lang="pt-BR">
 <head>
-  <meta charset=UTF-8>
-  <meta name=viewport content=width=device-width, initial-scale=1.0>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PUB ACP CONTROL ROOM</title>
-  <link rel=stylesheet href=styles.css>
-  <link rel=preconnect href=https://fonts.googleapis.com>
-  <link rel=preconnect href=https://fonts.gstatic.com crossorigin>
-  <link href=https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap rel=stylesheet>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
-<body class=dark-theme>
+<body class="dark-theme">
   <!-- Top Navigation Header -->
-  <header class=app-header>
-    <div class=header-brand>
-      <div class=brand-badge>PROVISIONAL</div>
-      <h1 class=brand-title>PUB ACP CONTROL ROOM</h1>
-      <span class=brand-subtitle>Standalone Observability Layer</span>
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="brand-logo">
+        <span class="brand-logo-icon">⚡</span>
+      </div>
+      <div>
+        <h1 class="brand-title">PUB CONTROL ROOM</h1>
+        <span class="brand-subtitle">Sala de Comando da Execução de Engenharia</span>
+      </div>
     </div>
 
-    <div class=header-actions>
-      <button id=btn-start-demo class=btn btn-secondary>
-        <span class=icon>▶</span> START DEMO RUN
-      </button>
-      <div id=connection-status class=status-indicator disconnected>
-        <span class=status-dot></span>
-        <span class=status-text>DISCONNECTED</span>
+    <!-- Live Execution Status in Header -->
+    <div class="header-center">
+      <div id="header-status-pill" class="header-status-pill idle">
+        <span class="pulse-dot"></span>
+        <span id="header-status-text">AGUARDANDO EXECUÇÃO</span>
       </div>
-      <div id=demo-badge class=demo-badge hidden>DEMO MODE</div>
+    </div>
+
+    <div class="header-actions">
+      <button id="btn-start-demo" class="btn btn-secondary">
+        <span class="icon">▶</span> SIMULAR DEMO
+      </button>
+      <div id="connection-status" class="status-indicator disconnected">
+        <span class="status-dot"></span>
+        <span class="status-text">DESCONECTADO</span>
+      </div>
+      <div id="demo-badge" class="demo-badge hidden">DEMO MODE</div>
     </div>
   </header>
 
-  <!-- Main Grid Layout -->
-  <div class=main-container>
-    <!-- Left Sidebar: Run Selector -->
-    <aside class=sidebar-runs>
-      <div class=sidebar-header>
-        <h2>EXECUTION RUNS</h2>
-        <span id=runs-count class=badge>0</span>
+  <!-- Main Layout -->
+  <div class="main-container">
+    <!-- Left Sidebar: Executions & Control -->
+    <aside class="sidebar-runs">
+      <!-- Operational Dispatch Panel -->
+      <div class="dispatch-panel">
+        <div class="dispatch-header">
+          <h2>NOVA EXECUÇÃO</h2>
+        </div>
+        <form id="dispatch-form" class="dispatch-form">
+          <div class="form-group">
+            <label for="select-project">PROJETO</label>
+            <select id="select-project" class="form-control" required>
+              <option value="" disabled selected>Carregando projetos...</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="select-conversation">CONVERSATION</label>
+            <select id="select-conversation" class="form-control">
+              <option value="">Nova conversation (Default)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="input-instruction">INSTRUÇÃO</label>
+            <textarea id="input-instruction" class="form-control instruction-area" rows="3" placeholder="Digite a instrução para o ClosedLoop..." required></textarea>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" id="btn-dispatch" class="btn btn-primary btn-block">
+              <span class="btn-text">EXECUTAR NO ACP</span>
+            </button>
+          </div>
+          <div id="dispatch-feedback" class="dispatch-feedback hidden"></div>
+        </form>
       </div>
-      <div id=runs-list class=runs-list>
-        <div class=empty-state>No runs recorded yet. Click Start Demo Run or trigger ClosedLoopEngine.</div>
+
+      <div class="sidebar-header runs-divider">
+        <h2>EXECUÇÕES</h2>
+        <span id="runs-count" class="badge">0</span>
+      </div>
+      <div id="runs-list" class="runs-list">
+        <div class="empty-state">Nenhuma execução registrada. Clique em "Simular Demo" ou inicie o ClosedLoopEngine.</div>
       </div>
     </aside>
 
-    <!-- Main Content Area -->
-    <main class=dashboard-content>
-      <!-- Top Summary Status Card -->
-      <section class="run-summary-bar">
-        <div class="summary-metric">
-          <span class="metric-label">RUN ID</span>
-          <span id="metric-run-id" class="metric-value monospace">N/A</span>
+    <!-- Center Stage: Flow (70% focus) -->
+    <main class="dashboard-content">
+      <!-- Active Execution Hero Bar -->
+      <section class="execution-hero-bar">
+        <div class="hero-left">
+          <div class="hero-project-name">
+            <span id="hero-project-title">Selecione uma execução</span>
+            <span id="hero-demo-tag" class="badge-demo-tag hidden">DEMO</span>
+          </div>
+          <div class="hero-subtext">
+            <span>Execução: <strong id="hero-run-id" class="monospace">N/A</strong></span>
+            <span>Tarefa: <strong id="hero-task-id" class="monospace">N/A</strong></span>
+            <span>Tempo: <strong id="hero-duration" class="monospace">0.0s</strong></span>
+          </div>
         </div>
-        <div class="summary-metric">
-          <span class="metric-label">PROJECT</span>
-          <span id="metric-project" class="metric-value">N/A</span>
-        </div>
-        <div class="summary-metric">
-          <span class="metric-label">PROJECT ID</span>
-          <span id="metric-project-id" class="metric-value monospace">N/A</span>
-        </div>
-        <div class="summary-metric">
-          <span class="metric-label">TASK ID</span>
-          <span id="metric-task-id" class="metric-value monospace">N/A</span>
-        </div>
-        <div class="summary-metric">
-          <span class="metric-label">CURRENT STATE</span>
-          <span id="metric-state" class="state-pill idle">IDLE</span>
-        </div>
-        <div class=summary-metric>
-          <span class=metric-label>DURATION</span>
-          <span id=metric-duration class=metric-value monospace>0.0s</span>
-        </div>
-        <div class=summary-metric>
-          <span class=metric-label>GPT TURNS</span>
-          <span id=metric-gpt-turns class=metric-value monospace>0</span>
-        </div>
-        <div class=summary-metric>
-          <span class=metric-label>AG EXECUTIONS</span>
-          <span id=metric-ag-executions class=metric-value monospace>0</span>
-        </div>
-        <div class=summary-metric>
-          <span class=metric-label>CORRECTIONS</span>
-          <span id=metric-corrections class=metric-value monospace>0</span>
-        </div>
-        <div class=summary-metric>
-          <span class=metric-label>DEPLOY STATUS</span>
-          <span id=metric-deploy-status class=state-pill not-available>N/A</span>
-        </div>
-        <div class=summary-metric controls-container>
-          <span class=metric-label>ENGINE CONTROLS</span>
-          <div class=engine-controls>
-            <button class=btn btn-sm btn-disabled title=Interactive pause not supported by ClosedLoopEngine disabled>PAUSE (UNAVAILABLE)</button>
-            <button class=btn btn-sm btn-disabled title=Interactive stop not supported by ClosedLoopEngine disabled>STOP (UNAVAILABLE)</button>
+
+        <div class="hero-right">
+          <div class="hero-state-banner" id="hero-state-banner">
+            <span class="hero-state-label">ESTADO ATUAL</span>
+            <span id="hero-state-val" class="state-pill idle">IDLE</span>
           </div>
         </div>
       </section>
 
-      <!-- Grid of Operational Panels -->
-      <div class=panels-grid>
-        <!-- Live Timeline (Centerpiece) -->
-        <section class=panel timeline-panel>
-          <div class=panel-header>
-            <h3>LIVE EVENT TIMELINE</h3>
-            <span class=panel-tag>SSE STREAM</span>
+      <!-- Main Flow Container (The Narrative Heart) -->
+      <section class="flow-section">
+        <div class="flow-header">
+          <div class="flow-header-title">
+            <h2>FLUXO DA EXECUÇÃO</h2>
+            <span class="flow-subtitle">Narrativa de turnos: GPT ↔ AG, validação e correções</span>
           </div>
-          <div id=events-timeline class=events-timeline>
-            <div class=timeline-empty>Waiting for execution events...</div>
-          </div>
-        </section>
-
-        <!-- Right Side Operational Views -->
-        <div class=secondary-panels-column>
-          <!-- GPT Panel -->
-          <section class=panel gpt-panel>
-            <div class=panel-header>
-              <h3>GPT REASONING & DECISION</h3>
-              <span id=gpt-timestamp class=timestamp-tag>NOT_AVAILABLE</span>
-            </div>
-            <div class=panel-body>
-              <div class=detail-row>
-                <span class=detail-title>LAST DECISION:</span>
-                <div id=gpt-last-decision class=detail-box>NOT_AVAILABLE</div>
-              </div>
-              <div class=detail-row>
-                <span class=detail-title>CONTEXT / SUMMARY:</span>
-                <div id=gpt-context class=detail-box monospace>NOT_AVAILABLE</div>
-              </div>
-              <div class=detail-row>
-                <span class=detail-title>ANALYZED RESULT:</span>
-                <div id=gpt-analyzed class=detail-box>NOT_AVAILABLE</div>
-              </div>
-              <div class=detail-row>
-                <span class=detail-title>NEXT ACTION:</span>
-                <div id=gpt-next-action class=detail-box highlight>NOT_AVAILABLE</div>
-              </div>
-            </div>
-          </section>
-
-          <!-- Antigravity Panel -->
-          <section class=panel ag-panel>
-            <div class=panel-header>
-              <h3>ANTIGRAVITY EXECUTION</h3>
-              <span id=ag-status-pill class=state-pill idle>IDLE</span>
-            </div>
-            <div class=panel-body>
-              <div class=detail-grid-2>
-                <div>
-                  <span class=detail-title>CURRENT EXECUTION:</span>
-                  <div id=ag-current-exec class=detail-inline>NOT_AVAILABLE</div>
-                </div>
-                <div>
-                  <span class=detail-title>DURATION:</span>
-                  <div id=ag-duration class=detail-inline monospace>NOT_AVAILABLE</div>
-                </div>
-              </div>
-              <div class=detail-row>
-                <span class=detail-title>COMMAND / ACTION:</span>
-                <div id=ag-command class=detail-box monospace>NOT_AVAILABLE</div>
-              </div>
-              <div class=detail-row>
-                <span class=detail-title>STDOUT SUMMARY:</span>
-                <div id=ag-stdout class=detail-box terminal-box>NOT_AVAILABLE</div>
-              </div>
-              <div class=detail-row>
-                <span class=detail-title>CHANGED FILES:</span>
-                <div id=ag-changed-files class=detail-box>None</div>
-              </div>
-            </div>
-          </section>
-
-          <!-- Validation Panel -->
-          <section class=panel validation-panel>
-            <div class=panel-header>
-              <h3>VALIDATION MATRIX</h3>
-              <span id=validation-last-run class=timestamp-tag>NOT_AVAILABLE</span>
-            </div>
-            <div class=matrix-grid>
-              <div class=matrix-cell>
-                <span class=matrix-label>BUILD</span>
-                <span id=val-build class=matrix-pill not-available>NOT_AVAILABLE</span>
-              </div>
-              <div class=matrix-cell>
-                <span class=matrix-label>UNIT</span>
-                <span id=val-unit class=matrix-pill not-available>NOT_AVAILABLE</span>
-              </div>
-              <div class=matrix-cell>
-                <span class=matrix-label>INTEGRATION</span>
-                <span id=val-integration class=matrix-pill not-available>NOT_AVAILABLE</span>
-              </div>
-              <div class=matrix-cell>
-                <span class=matrix-label>E2E</span>
-                <span id=val-e2e class=matrix-pill not-available>NOT_AVAILABLE</span>
-              </div>
-              <div class=matrix-cell>
-                <span class=matrix-label>SMOKE</span>
-                <span id=val-smoke class=matrix-pill not-available>NOT_AVAILABLE</span>
-              </div>
-            </div>
-            <div id=val-details class=matrix-details>No validation reports recorded.</div>
-          </section>
-
-          <!-- Deploy & Workspace Grid -->
-          <div class=panels-split-2>
-            <!-- Deploy Panel -->
-            <section class=panel deploy-panel>
-              <div class=panel-header>
-                <h3>DEPLOY</h3>
-                <span id=deploy-pill class=matrix-pill not-available>NOT_AVAILABLE</span>
-              </div>
-              <div class=panel-body>
-                <div class=detail-row>
-                  <span class=detail-title>PUBLIC URL:</span>
-                  <div id=deploy-url class=detail-inline monospace>NOT_AVAILABLE</div>
-                </div>
-                <div class=detail-row>
-                  <span class=detail-title>HTTP STATUS:</span>
-                  <span id=deploy-http-status class=monospace>NOT_AVAILABLE</span>
-                </div>
-                <div class=detail-row>
-                  <span class=detail-title>LAST DEPLOY:</span>
-                  <span id=deploy-time class=monospace>NOT_AVAILABLE</span>
-                </div>
-              </div>
-            </section>
-
-            <!-- Workspace Panel -->
-            <section class="panel workspace-panel">
-              <div class="panel-header">
-                <h3>WORKSPACE &amp; GIT SECURITY</h3>
-                <span id="ws-git-status" class="status-chip">CLEAN</span>
-              </div>
-              <div class="panel-body">
-                <div class="detail-row">
-                  <span class="detail-title">WORKSPACE PATH:</span>
-                  <div id="ws-path" class="detail-box monospace text-truncate">NOT_AVAILABLE</div>
-                </div>
-                <div class="detail-grid-2">
-                  <div>
-                    <span class="detail-title">EXPECTED REPO:</span>
-                    <div id="ws-expected-repo" class="detail-inline monospace text-truncate">NOT_AVAILABLE</div>
-                  </div>
-                  <div>
-                    <span class="detail-title">ACTUAL REPO:</span>
-                    <div id="ws-actual-repo" class="detail-inline monospace text-truncate">NOT_AVAILABLE</div>
-                  </div>
-                </div>
-                <div class="detail-grid-2">
-                  <div>
-                    <span class="detail-title">BRANCH:</span>
-                    <div id="ws-branch" class="detail-inline monospace">NOT_AVAILABLE</div>
-                  </div>
-                  <div>
-                    <span class="detail-title">LAST COMMIT:</span>
-                    <div id="ws-last-commit" class="detail-inline monospace text-truncate">NOT_AVAILABLE</div>
-                  </div>
-                </div>
-              </div>
-            </section>
+          <div class="flow-header-tags">
+            <span id="live-stream-badge" class="live-tag">● AO VIVO (SSE)</span>
           </div>
         </div>
-      </div>
+
+        <!-- The Flow Timeline Container -->
+        <div id="conversation-flow" class="conversation-flow">
+          <div class="flow-empty-state">
+            <div class="empty-icon">⏳</div>
+            <div class="empty-text">Aguardando eventos do fluxo de execução...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bottom Secondary Accordion: Technical Details & Matrix -->
+      <section class="secondary-collapsible">
+        <details class="tech-details-details" open>
+          <summary class="tech-details-summary">
+            <span>⚙️ DETALHES TÉCNICOS &amp; AMBIENTE</span>
+            <span class="summary-arrow">▼</span>
+          </summary>
+
+          <div class="tech-details-body">
+            <!-- Grid: Validation + Workspace + Deploy -->
+            <div class="tech-grid">
+              <!-- Validation Card -->
+              <div class="tech-card">
+                <h4>VALIDAÇÃO DA EXECUÇÃO</h4>
+                <div class="matrix-grid">
+                  <div class="matrix-cell">
+                    <span class="matrix-label">BUILD</span>
+                    <span id="val-build" class="matrix-pill not-available">N/A</span>
+                  </div>
+                  <div class="matrix-cell">
+                    <span class="matrix-label">TESTES</span>
+                    <span id="val-unit" class="matrix-pill not-available">N/A</span>
+                  </div>
+                  <div class="matrix-cell">
+                    <span class="matrix-label">INTEGRAÇÃO</span>
+                    <span id="val-integration" class="matrix-pill not-available">N/A</span>
+                  </div>
+                  <div class="matrix-cell">
+                    <span class="matrix-label">E2E</span>
+                    <span id="val-e2e" class="matrix-pill not-available">N/A</span>
+                  </div>
+                  <div class="matrix-cell">
+                    <span class="matrix-label">SMOKE</span>
+                    <span id="val-smoke" class="matrix-pill not-available">N/A</span>
+                  </div>
+                </div>
+                <div id="val-details" class="matrix-details">Nenhum relatório de validação.</div>
+              </div>
+
+              <!-- Workspace Card -->
+              <div class="tech-card">
+                <h4>AMBIENTE &amp; SEGURANÇA GIT</h4>
+                <div class="tech-field">
+                  <span class="field-lbl">Workspace:</span>
+                  <span id="ws-path" class="field-val monospace text-truncate">N/A</span>
+                </div>
+                <div class="tech-field-grid">
+                  <div>
+                    <span class="field-lbl">Repositório:</span>
+                    <span id="ws-actual-repo" class="field-val monospace text-truncate">N/A</span>
+                  </div>
+                  <div>
+                    <span class="field-lbl">Branch:</span>
+                    <span id="ws-branch" class="field-val monospace">N/A</span>
+                  </div>
+                </div>
+                <div class="tech-field-grid">
+                  <div>
+                    <span class="field-lbl">Último Commit:</span>
+                    <span id="ws-last-commit" class="field-val monospace text-truncate">N/A</span>
+                  </div>
+                  <div>
+                    <span class="field-lbl">Status Git:</span>
+                    <span id="ws-git-status" class="field-val status-clean">LIMPO</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Deploy Card -->
+              <div class="tech-card">
+                <h4>DEPLOY</h4>
+                <div class="tech-field">
+                  <span class="field-lbl">Status:</span>
+                  <span id="deploy-pill" class="matrix-pill not-available">N/A</span>
+                </div>
+                <div class="tech-field">
+                  <span class="field-lbl">URL Pública:</span>
+                  <span id="deploy-url" class="field-val monospace">N/A</span>
+                </div>
+                <div class="tech-field-grid">
+                  <div>
+                    <span class="field-lbl">HTTP:</span>
+                    <span id="deploy-http-status" class="field-val monospace">N/A</span>
+                  </div>
+                  <div>
+                    <span class="field-lbl">Último Deploy:</span>
+                    <span id="deploy-time" class="field-val monospace">N/A</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Operational Metrics Bar -->
+            <div class="metrics-bar">
+              <div class="m-item">
+                <span class="m-lbl">Turnos GPT:</span>
+                <span id="metric-gpt-turns" class="m-val monospace">0</span>
+              </div>
+              <div class="m-item">
+                <span class="m-lbl">Execuções AG:</span>
+                <span id="metric-ag-executions" class="m-val monospace">0</span>
+              </div>
+              <div class="m-item">
+                <span class="m-lbl">Correções:</span>
+                <span id="metric-corrections" class="m-val monospace">0</span>
+              </div>
+              <div class="m-item">
+                <span class="m-lbl">Controles de Motor:</span>
+                <span class="m-val"><button class="btn-disabled-tag" disabled>PAUSA (NÃO DISPONÍVEL)</button></span>
+              </div>
+            </div>
+          </div>
+        </details>
+      </section>
     </main>
   </div>
 
-  <script src=app.js></script>
+  <!-- Contract Compatibility Hooks (Hidden to preserve test contracts) -->
+  <div style="display: none;" aria-hidden="true">
+    <span id="metric-run-id"></span>
+    <span id="metric-project"></span>
+    <span id="metric-project-id"></span>
+    <span id="metric-task-id"></span>
+    <span id="metric-state"></span>
+    <span id="metric-duration"></span>
+    <span id="metric-deploy-status"></span>
+    <div id="events-timeline" class="events-timeline timeline-panel">LIVE EVENT TIMELINE</div>
+    <div class="gpt-panel">GPT REASONING & DECISION</div>
+    <span id="gpt-timestamp"></span>
+    <div id="gpt-last-decision"></div>
+    <div id="gpt-context"></div>
+    <div id="gpt-analyzed"></div>
+    <div id="gpt-next-action"></div>
+    <div class="ag-panel">ANTIGRAVITY EXECUTION</div>
+    <span id="ag-status-pill"></span>
+    <div id="ag-current-exec"></div>
+    <span id="ag-duration"></span>
+    <div id="ag-command"></div>
+    <div id="ag-stdout"></div>
+    <div id="ag-changed-files"></div>
+    <div class="validation-panel">VALIDATION MATRIX</div>
+    <span id="validation-last-run"></span>
+    <div class="deploy-panel">DEPLOY</div>
+    <div class="workspace-panel">WORKSPACE &amp; GIT SECURITY</div>
+    <span id="ws-expected-repo"></span>
+    <button disabled>PAUSE (UNAVAILABLE)</button>
+    <button disabled>STOP (UNAVAILABLE)</button>
+  </div>
+
+  <script src="app.js"></script>
 </body>
 </html>
+

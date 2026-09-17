@@ -1,3 +1,5 @@
+import { ValidationPolicy } from '../validation/types.js';
+
 export interface ProjectDefinition {
   projectId: string;
   projectName: string;
@@ -6,6 +8,7 @@ export interface ProjectDefinition {
   defaultBranch: string;
   enabled: boolean;
   metadata?: Record<string, unknown>;
+  validationPolicy?: ValidationPolicy;
 }
 
 export interface ExecutionContext {
@@ -21,6 +24,8 @@ export interface ExecutionContext {
   trigger?: string;
   parentRunId?: string;
   actor?: string;
+  validationPolicy?: ValidationPolicy;
+  conversationId?: string;
 }
 
 export type SafetyBlockReason =
@@ -31,7 +36,8 @@ export type SafetyBlockReason =
   | 'NOT_A_GIT_REPOSITORY'
   | 'WORKSPACE_REPOSITORY_MISMATCH'
   | 'WORKSPACE_BRANCH_MISMATCH'
-  | 'SECURITY_RULE_VIOLATION';
+  | 'SECURITY_RULE_VIOLATION'
+  | 'WORKSPACE_ALREADY_LOCKED';
 
 export interface ResolutionResult {
   ok: boolean;

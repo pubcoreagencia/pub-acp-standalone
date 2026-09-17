@@ -298,3 +298,372 @@ test('ProjectDispatcher - executes full flow and propagates execution context', 
   assert.ok(eventTypes.includes('RUN_STARTED'));
   assert.ok(eventTypes.includes('RUN_COMPLETED'));
 });
+
+test('ProjectDispatcher - Conversation Safety: passes valid conversation belonging to workspace and propagates conversationId', async () => {
+  const registry = new ProjectRegistry();
+  registry.registerProject({
+    projectId: 'proj-valid-conv',
+    projectName: 'Project Valid Conv',
+    workspacePath: process.cwd(),
+    repository: 'pubcoreagencia/pub-acp-standalone',
+    defaultBranch: 'main',
+    enabled: true
+  });
+
+  const gitInspector = new MockGitInspector({
+    [process.cwd()]: {
+      isRepo: true,
+      remote: 'https://github.com/pubcoreagencia/pub-acp-standalone',
+      branch: 'main'
+    }
+  });
+
+  const resolver = new WorkspaceResolver(registry, gitInspector);
+  const safetyGate = new SafetyGate();
+  const eventBus = new EventBus();
+
+  let receivedConversationId: string | undefined;
+  const engineFactory = (ctx: any) => {
+    return {
+      runLoop: async (prompt: string, opts: any) => {
+        receivedConversationId = opts.conversationId;
+        return {
+          loop_id: opts.loopId,
+          gpt_session_id: 'gpt-s',
+          antigravity_session_id: 'ag-s',
+          antigravity_conversation_id: receivedConversationId || null,
+          total_turns: 1,
+          status: 'COMPLETED',
+          turns: [],
+          total_duration_ms: 10,
+          started_at: '',
+          completed_at: '',
+          manual_copy_paste_operations: 0
+        };
+      }
+    } as any;
+  };
+
+  const mockSessionStore = {
+    listConversationsForWorkspace: async () => [],
+    getConversation: async () => null,
+    belongsToWorkspace: async (convId: string, wsPath: string) => {
+      return convId === 'conv-valid-uuid' && wsPath === process.cwd();
+    }
+  };
+
+  const contextStore = new MemoryProjectContextStore();
+  const dispatcher = new ProjectDispatcher(registry, contextStore, resolver, safetyGate, engineFactory, eventBus, mockSessionStore);
+
+  const result = await dispatcher.dispatch({
+    projectId: 'proj-valid-conv',
+    initialPrompt: 'Resume task in conversation',
+    conversationId: 'conv-valid-uuid',
+    maxTurns: 1
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.safetyBlocked, false);
+  assert.equal(result.context?.conversationId, 'conv-valid-uuid');
+  assert.equal(receivedConversationId, 'conv-valid-uuid');
+});
+
+test('ProjectDispatcher - Conversation Safety: blocks non-existent or foreign conversation before engine execution (AG_CALL_COUNT = 0)', async () => {
+  const registry = new ProjectRegistry();
+  registry.registerProject({
+    projectId: 'proj-blocked-conv',
+    projectName: 'Project Blocked Conv',
+    workspacePath: process.cwd(),
+    repository: 'pubcoreagencia/pub-acp-standalone',
+    defaultBranch: 'main',
+    enabled: true
+  });
+
+  const gitInspector = new MockGitInspector({
+    [process.cwd()]: {
+      isRepo: true,
+      remote: 'https://github.com/pubcoreagencia/pub-acp-standalone',
+      branch: 'main'
+    }
+  });
+
+  const resolver = new WorkspaceResolver(registry, gitInspector);
+  const safetyGate = new SafetyGate();
+  const eventBus = new EventBus();
+
+  const emittedEvents: AutonomyEvent[] = [];
+  eventBus.subscribe('*', e => emittedEvents.push(e));
+
+  let engineExecuted = false;
+  const engineFactory = () => {
+    engineExecuted = true;
+    return {} as any;
+  };
+
+  const mockSessionStore = {
+    listConversationsForWorkspace: async () => [],
+    getConversation: async () => null,
+    belongsToWorkspace: async (convId: string) => {
+      // conversation belongs to another workspace or doesn't exist
+      return false;
+    }
+  };
+
+  const contextStore = new MemoryProjectContextStore();
+  const dispatcher = new ProjectDispatcher(registry, contextStore, resolver, safetyGate, engineFactory, eventBus, mockSessionStore);
+
+  const result = await dispatcher.dispatch({
+    projectId: 'proj-blocked-conv',
+    initialPrompt: 'Malicious or mismatched conversation attempt',
+    conversationId: 'conv-foreign-uuid',
+    maxTurns: 1
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.safetyBlocked, true);
+  assert.equal(result.blockedReason, 'SECURITY_RULE_VIOLATION');
+  assert.ok(result.blockedMessage?.includes('does not belong to project workspace'));
+  assert.equal(engineExecuted, false, 'ClosedLoopEngine must NEVER be initialized or executed');
+
+  const blockedEvent = emittedEvents.find(e => e.type === 'SAFETY_GATE_BLOCKED');
+  assert.ok(blockedEvent, 'SAFETY_GATE_BLOCKED event must be emitted');
+  assert.equal(blockedEvent?.details?.reason, 'SECURITY_RULE_VIOLATION');
+});
+
+test('ProjectDispatcher - Workspace Lock: cross-project targeting same workspace blocks second project (AG_CALL_COUNT = 0)', async () => {
+  const registry = new ProjectRegistry();
+  // Project Alpha and Project Beta share the exact same workspacePath
+  registry.registerProject({
+    projectId: 'shared-proj-alpha',
+    projectName: 'Shared Project Alpha',
+    workspacePath: process.cwd(),
+    repository: 'pubcoreagencia/pub-acp-standalone',
+    defaultBranch: 'main',
+    enabled: true
+  });
+  registry.registerProject({
+    projectId: 'shared-proj-beta',
+    projectName: 'Shared Project Beta',
+    workspacePath: process.cwd(),
+    repository: 'pubcoreagencia/pub-acp-standalone',
+    defaultBranch: 'main',
+    enabled: true
+  });
+
+  const gitInspector = new MockGitInspector({
+    [process.cwd()]: {
+      isRepo: true,
+      remote: 'https://github.com/pubcoreagencia/pub-acp-standalone',
+      branch: 'main'
+    }
+  });
+
+  const resolver = new WorkspaceResolver(registry, gitInspector);
+  const safetyGate = new SafetyGate();
+  const eventBus = new EventBus();
+
+  const emittedEvents: AutonomyEvent[] = [];
+  eventBus.subscribe('*', e => emittedEvents.push(e));
+
+  let agCallCount = 0;
+  let activeEnginePromiseResolve: () => void;
+  const activeEnginePromise = new Promise<void>(resolve => {
+    activeEnginePromiseResolve = resolve;
+  });
+
+  const engineFactory = (ctx: any) => {
+    return {
+      runLoop: async () => {
+        agCallCount++;
+        // Keep engine active until released by test
+        await activeEnginePromise;
+        return {
+          status: 'COMPLETED',
+          total_turns: 1,
+          turns: []
+        };
+      }
+    } as any;
+  };
+
+  const contextStore = new MemoryProjectContextStore();
+  const dispatcher = new ProjectDispatcher(registry, contextStore, resolver, safetyGate, engineFactory, eventBus);
+
+  // 1. Dispatch Run 1 on project Alpha (holds the lock)
+  const run1Promise = dispatcher.dispatch({
+    projectId: 'shared-proj-alpha',
+    initialPrompt: 'Task 1 in shared workspace',
+    runId: 'RUN-SHARED-1',
+    maxTurns: 1
+  });
+
+  // Yield to allow run 1 to acquire the lock and start running
+  await new Promise(r => setTimeout(r, 20));
+
+  // 2. Dispatch Run 2 on project Beta (same workspace)
+  const result2 = await dispatcher.dispatch({
+    projectId: 'shared-proj-beta',
+    initialPrompt: 'Task 2 in shared workspace',
+    runId: 'RUN-SHARED-2',
+    maxTurns: 1
+  });
+
+  // Result 2 must be blocked immediately by WORKSPACE_ALREADY_LOCKED
+  assert.equal(result2.ok, false);
+  assert.equal(result2.safetyBlocked, true);
+  assert.equal(result2.blockedReason, 'WORKSPACE_ALREADY_LOCKED');
+  assert.ok(result2.blockedMessage?.includes('currently locked by run \'RUN-SHARED-1\''));
+
+  // Release Run 1
+  activeEnginePromiseResolve!();
+  const result1 = await run1Promise;
+  assert.equal(result1.ok, true);
+
+  // AG was called only once (by Run 1, never by Run 2)
+  assert.equal(agCallCount, 1);
+
+  // Verify events
+  const lockAcquiredEvt = emittedEvents.find(e => e.type === 'WORKSPACE_LOCK_ACQUIRED');
+  assert.ok(lockAcquiredEvt);
+  assert.equal(lockAcquiredEvt?.details?.owner, 'RUN-SHARED-1');
+
+  const lockBlockedEvt = emittedEvents.find(e => e.type === 'WORKSPACE_LOCK_BLOCKED');
+  assert.ok(lockBlockedEvt);
+  assert.equal(lockBlockedEvt?.details?.lockedByRunId, 'RUN-SHARED-1');
+  assert.equal(lockBlockedEvt?.details?.reason, 'WORKSPACE_ALREADY_LOCKED');
+
+  const lockReleasedEvt = emittedEvents.find(e => e.type === 'WORKSPACE_LOCK_RELEASED');
+  assert.ok(lockReleasedEvt);
+  assert.equal(lockReleasedEvt?.details?.owner, 'RUN-SHARED-1');
+});
+
+test('ProjectDispatcher - Workspace Lock: different conversation on same workspace is blocked while active', async () => {
+  const registry = new ProjectRegistry();
+  registry.registerProject({
+    projectId: 'proj-conv-lock',
+    projectName: 'Project Conv Lock',
+    workspacePath: process.cwd(),
+    repository: 'pubcoreagencia/pub-acp-standalone',
+    defaultBranch: 'main',
+    enabled: true
+  });
+
+  const gitInspector = new MockGitInspector({
+    [process.cwd()]: {
+      isRepo: true,
+      remote: 'https://github.com/pubcoreagencia/pub-acp-standalone',
+      branch: 'main'
+    }
+  });
+
+  const resolver = new WorkspaceResolver(registry, gitInspector);
+  const safetyGate = new SafetyGate();
+  const eventBus = new EventBus();
+
+  let unblockEngine: () => void;
+  const engineBlock = new Promise<void>(res => { unblockEngine = res; });
+
+  const engineFactory = () => ({
+    runLoop: async () => {
+      await engineBlock;
+      return { status: 'COMPLETED', total_turns: 1, turns: [] };
+    }
+  } as any);
+
+  const mockSessionStore = {
+    listConversationsForWorkspace: async () => [],
+    getConversation: async () => null,
+    belongsToWorkspace: async () => true
+  };
+
+  const contextStore = new MemoryProjectContextStore();
+  const dispatcher = new ProjectDispatcher(registry, contextStore, resolver, safetyGate, engineFactory, eventBus, mockSessionStore);
+
+  // Run 1 in conv-X
+  const run1Promise = dispatcher.dispatch({
+    projectId: 'proj-conv-lock',
+    initialPrompt: 'Run in conv X',
+    conversationId: 'conv-x-uuid',
+    runId: 'RUN-CONV-X'
+  });
+
+  await new Promise(r => setTimeout(r, 20));
+
+  // Run 2 in conv-Y (same workspace)
+  const res2 = await dispatcher.dispatch({
+    projectId: 'proj-conv-lock',
+    initialPrompt: 'Run in conv Y',
+    conversationId: 'conv-y-uuid',
+    runId: 'RUN-CONV-Y'
+  });
+
+  assert.equal(res2.ok, false);
+  assert.equal(res2.safetyBlocked, true);
+  assert.equal(res2.blockedReason, 'WORKSPACE_ALREADY_LOCKED');
+
+  unblockEngine!();
+  const res1 = await run1Promise;
+  assert.equal(res1.ok, true);
+});
+
+test('ProjectDispatcher - Workspace Lock: exception in engine execution reliably releases lock', async () => {
+  const registry = new ProjectRegistry();
+  registry.registerProject({
+    projectId: 'proj-exception-lock',
+    projectName: 'Project Exception Lock',
+    workspacePath: process.cwd(),
+    repository: 'pubcoreagencia/pub-acp-standalone',
+    defaultBranch: 'main',
+    enabled: true
+  });
+
+  const gitInspector = new MockGitInspector({
+    [process.cwd()]: {
+      isRepo: true,
+      remote: 'https://github.com/pubcoreagencia/pub-acp-standalone',
+      branch: 'main'
+    }
+  });
+
+  const resolver = new WorkspaceResolver(registry, gitInspector);
+  const safetyGate = new SafetyGate();
+  const eventBus = new EventBus();
+
+  let shouldThrow = true;
+  const engineFactory = () => ({
+    runLoop: async () => {
+      if (shouldThrow) {
+        throw new Error('Fatal crash during engine execution!');
+      }
+      return { status: 'COMPLETED', total_turns: 1, turns: [] };
+    }
+  } as any);
+
+  const contextStore = new MemoryProjectContextStore();
+  const dispatcher = new ProjectDispatcher(registry, contextStore, resolver, safetyGate, engineFactory, eventBus);
+
+  // Run 1 throws fatal exception
+  await assert.rejects(
+    async () => {
+      await dispatcher.dispatch({
+        projectId: 'proj-exception-lock',
+        initialPrompt: 'Will crash',
+        runId: 'RUN-CRASH'
+      });
+    },
+    /Fatal crash during engine execution!/
+  );
+
+  // Run 2 must immediately be able to acquire lock because finally released it
+  shouldThrow = false;
+  const res2 = await dispatcher.dispatch({
+    projectId: 'proj-exception-lock',
+    initialPrompt: 'Will succeed after crash',
+    runId: 'RUN-SUCCESS-AFTER-CRASH'
+  });
+
+  assert.equal(res2.ok, true);
+  assert.equal(res2.safetyBlocked, false);
+});
+
+
