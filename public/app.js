@@ -53,6 +53,7 @@ const elWsGitStatus = document.getElementById('ws-git-status');
 
 const elMetricGptTurns = document.getElementById('metric-gpt-turns');
 const elMetricAgExecutions = document.getElementById('metric-ag-executions');
+const elMetricToolExecutions = document.getElementById('metric-tool-executions');
 const elMetricCorrections = document.getElementById('metric-corrections');
 
 // Compatibility elements (hidden, used by existing test assertions)
@@ -69,6 +70,8 @@ const statusLabelsPt = {
   'IDLE': 'AGUARDANDO',
   'STARTING': 'INICIANDO',
   'GPT_THINKING': 'GPT PENSANDO',
+  'DIRECT_RUNNING': 'GPT DIRECT',
+  'TOOL_RUNNING': 'EXECUTANDO TOOLS',
   'AG_RUNNING': 'AG EXECUTANDO',
   'VALIDATING': 'VALIDANDO',
   'WAITING': 'AGUARDANDO',
@@ -289,7 +292,7 @@ function createCardForEvent(event) {
     }
 
     case 'TOOL_STARTED': {
-      card.className = 'flow-card flow-card-ag';
+      card.className = 'flow-card flow-card-tool';
       const instructionText = (event.details && (event.details.instruction || event.details.instructionSnippet)) || event.summary;
       card.innerHTML =
         '<div class="flow-card-header">' +
@@ -308,7 +311,7 @@ function createCardForEvent(event) {
     }
 
     case 'SANDBOX_EXECUTION': {
-      card.className = 'flow-card';
+      card.className = 'flow-card flow-card-sandbox';
       const telemetry = event.details && event.details.telemetry;
       const teleStr = telemetry ? JSON.stringify(telemetry, null, 2) : event.summary;
       card.innerHTML =
@@ -330,7 +333,7 @@ function createCardForEvent(event) {
     }
 
     case 'TOOL_FINISHED': {
-      card.className = 'flow-card flow-card-ag';
+      card.className = 'flow-card flow-card-tool';
       const responseText = (event.details && (event.details.response || event.details.outputSnippet)) || event.summary;
       card.innerHTML =
         '<div class="flow-card-header">' +
@@ -595,6 +598,7 @@ function renderRunDetail(run) {
   // Metrics Bar
   elMetricGptTurns.textContent = run.gptTurns || 0;
   elMetricAgExecutions.textContent = run.agExecutions || 0;
+  if (elMetricToolExecutions) elMetricToolExecutions.textContent = run.toolExecutions || 0;
   elMetricCorrections.textContent = run.corrections || 0;
 
   // Sync hidden compatibility elements for existing test contracts

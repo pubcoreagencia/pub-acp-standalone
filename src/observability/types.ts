@@ -37,6 +37,8 @@ export type RunState =
   | 'IDLE'
   | 'STARTING'
   | 'GPT_THINKING'
+  | 'DIRECT_RUNNING'
+  | 'TOOL_RUNNING'
   | 'AG_RUNNING'
   | 'VALIDATING'
   | 'WAITING'
@@ -131,6 +133,7 @@ export interface RunModel {
   durationMs: number;
   gptTurns: number;
   agExecutions: number;
+  toolExecutions?: number;
   corrections: number;
   tests: ValidationSummary;
   deployStatus: DeploySummary;

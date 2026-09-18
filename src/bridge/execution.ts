@@ -134,8 +134,11 @@ Ao finalizar, confirme as ações executadas e o resultado.`;
 
     let executionOutput = r.text;
 
-    // 1. Parse directives maintaining strict global occurrence order
-    const toolRequests = ToolParser.parse(r.text);
+    // 1. Parse directives from the instruction prompt or model response
+    let toolRequests = ToolParser.parse(prompt);
+    if (toolRequests.length === 0) {
+      toolRequests = ToolParser.parse(r.text);
+    }
 
     let batchSummary = '';
     let executedTelemetry: any[] = [];
@@ -150,7 +153,10 @@ Ao finalizar, confirme as ações executadas e o resultado.`;
       executedTelemetry = toolBatch.telemetry;
     } else {
       // Fallback to legacy parser if no tool requests parsed
-      const actions = ActionParser.parse(r.text);
+      let actions = ActionParser.parse(prompt);
+      if (actions.length === 0) {
+        actions = ActionParser.parse(r.text);
+      }
       if (actions.length > 0) {
         const batchResult = this.executor.executeBatch(cwd, actions);
         batchSummary = batchResult.summary;

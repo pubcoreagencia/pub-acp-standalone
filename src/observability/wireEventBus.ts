@@ -164,18 +164,8 @@ export function wireEventBusToRunStore(eventBus: IEventBus, runStore: IRunStore)
         break;
 
       case 'TOOL_STARTED':
-        runStore.updateState(event.runId, 'AG_RUNNING', {
-          agExecutions: run.agExecutions + 1,
-          agView: {
-            status: 'RUNNING',
-            currentExecution: `Turn ${event.turn || 1}`,
-            commandOrAction: 'tool.execute',
-            durationMs: 'NOT_AVAILABLE',
-            stdoutSummary: (event.details?.instructionSnippet as string) || 'Direct GPT instruction dispatched',
-            stderrSummary: '',
-            changedFiles: run.agView.changedFiles,
-            result: 'IN_PROGRESS'
-          }
+        runStore.updateState(event.runId, 'TOOL_RUNNING', {
+          toolExecutions: ((run as any).toolExecutions || 0) + 1
         });
         break;
 
@@ -190,24 +180,11 @@ export function wireEventBusToRunStore(eventBus: IEventBus, runStore: IRunStore)
         break;
 
       case 'SANDBOX_EXECUTION':
-        runStore.updateState(event.runId, 'AG_RUNNING', {
-          agView: {
-            ...run.agView,
-            durationMs: (event.details?.durationMs as number) || run.agView.durationMs,
-            result: (event.details?.status as string) || 'COMPLETED'
-          }
-        });
+        runStore.updateState(event.runId, 'TOOL_RUNNING');
         break;
 
       case 'TOOL_FINISHED':
-        runStore.updateState(event.runId, 'VALIDATING', {
-          agView: {
-            ...run.agView,
-            status: event.details?.status === 'COMPLETED' ? 'COMPLETED' : 'FAILED',
-            durationMs: (event.details?.durationMs as number) || run.agView.durationMs,
-            result: (event.details?.status as string) || 'FINISHED'
-          }
-        });
+        runStore.updateState(event.runId, 'DIRECT_RUNNING');
         break;
 
       case 'AG_FINISHED':
