@@ -4,7 +4,9 @@ export type ExecutionCapability =
   | 'workspace.read'
   | 'workspace.write'
   | 'workspace.delete'
-  | 'process.exec';
+  | 'process.exec'
+  | 'process.child_process'
+  | 'network.outbound';
 
 export interface FileCreateAction {
   type: 'FILE_CREATE';
@@ -57,6 +59,8 @@ export interface ExecutedCommandResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  isSandboxed?: boolean;
+  sandboxProvider?: string;
 }
 
 export interface ActionBatchExecutionResult {
@@ -80,4 +84,5 @@ export interface ActionPolicy {
   disallowShellOperators?: boolean;
   disallowExternalPathArgs?: boolean;
   execTimeoutMs?: number;
+  sandboxProvider?: 'node-permission' | 'macos-sandbox' | 'windows-sandbox' | 'linux-sandbox' | 'restricted-process';
 }

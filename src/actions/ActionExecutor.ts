@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync, execSync } from 'node:child_process';
 import {
   ActionDirective,
   ActionResult,
@@ -11,15 +10,19 @@ import {
 } from './types.js';
 import { CommandTokenizer } from './CommandTokenizer.js';
 import { SandboxSecurity } from './SandboxSecurity.js';
+import { ProcessSandboxAdapter } from './sandbox/types.js';
+import { ProcessSandboxFactory } from './sandbox/ProcessSandboxFactory.js';
 
 export interface ActionExecutorOptions {
   policy?: ActionPolicy;
   allowExec?: boolean;
   execTimeoutMs?: number;
+  sandboxAdapter?: ProcessSandboxAdapter;
 }
 
 export class ActionExecutor {
   private readonly policy: ActionPolicy;
+  private readonly sandboxAdapter: ProcessSandboxAdapter;
 
   private static readonly BLOCKED_PATTERNS = [
     /(\b|\/)(rm\s+-rf\s+[\/~]|\bformat\b|\bdd\b|\bmkfs\b)/i,
@@ -51,6 +54,9 @@ export class ActionExecutor {
       rawPolicy.allowFileDelete ??
       true;
 
+    const allowChildProcess = rawPolicy.capabilities?.['process.child_process'] ?? false;
+    const allowNetwork = rawPolicy.capabilities?.['network.outbound'] ?? false;
+
     this.policy = {
       allowFileCreate,
       allowFileWrite,
@@ -62,17 +68,26 @@ export class ActionExecutor {
       disallowShellOperators: rawPolicy.disallowShellOperators ?? true,
       disallowExternalPathArgs: rawPolicy.disallowExternalPathArgs ?? true,
       execTimeoutMs: rawPolicy.execTimeoutMs ?? options.execTimeoutMs ?? 30000,
+      sandboxProvider: rawPolicy.sandboxProvider || 'node-permission',
       capabilities: {
         'workspace.read': allowFileRead,
         'workspace.write': allowFileCreate || allowFileWrite,
         'workspace.delete': allowFileDelete,
-        'process.exec': allowExec
+        'process.exec': allowExec,
+        'process.child_process': allowChildProcess,
+        'network.outbound': allowNetwork
       }
     };
+
+    this.sandboxAdapter = options.sandboxAdapter || ProcessSandboxFactory.create(this.policy.sandboxProvider);
   }
 
   getPolicy(): ActionPolicy {
     return { ...this.policy };
+  }
+
+  getSandboxAdapter(): ProcessSandboxAdapter {
+    return this.sandboxAdapter;
   }
 
   hasCapability(capability: ExecutionCapability): boolean {
@@ -329,38 +344,72 @@ export class ActionExecutor {
         }
 
         const timeoutMs = this.policy.execTimeoutMs ?? 30000;
+
         try {
-          // Execute with direct binary invocation without shell (shell: false)
-          const stdout = execFileSync(check.executable, check.args, {
+          // Prepare Sandbox Context
+          const grantedCaps: ExecutionCapability[] = [];
+          if (this.hasCapability('workspace.read')) grantedCaps.push('workspace.read');
+          if (this.hasCapability('workspace.write')) grantedCaps.push('workspace.write');
+          if (this.hasCapability('workspace.delete')) grantedCaps.push('workspace.delete');
+          if (this.hasCapability('process.exec')) grantedCaps.push('process.exec');
+          if (this.hasCapability('process.child_process')) grantedCaps.push('process.child_process');
+          if (this.hasCapability('network.outbound')) grantedCaps.push('network.outbound');
+
+          const sandboxCtx = this.sandboxAdapter.prepare(workspaceRoot, grantedCaps);
+
+          // Execute via Process Sandbox Adapter
+          const sandboxRes = this.sandboxAdapter.execute(sandboxCtx, check.executable, check.args, {
             cwd: workspaceRoot,
-            timeout: timeoutMs,
-            encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'pipe'],
-            env: {
-              ...process.env,
-              PWD: workspaceRoot
-            }
+            timeoutMs
           });
-          return {
-            action,
-            capability,
-            status: 'SUCCESS',
-            output: stdout,
-            metadata: { executable: check.executable, args: check.args }
+
+          // Telemetry and metadata recording
+          const metadata = {
+            executable: check.executable,
+            args: check.args,
+            isSandboxed: sandboxRes.isSandboxed,
+            provider: sandboxRes.provider,
+            platform: sandboxRes.platform,
+            exitCode: sandboxRes.exitCode,
+            blockedReason: sandboxRes.blockedReason
           };
+
+          if (sandboxRes.blockedReason) {
+            return {
+              action,
+              capability,
+              status: 'BLOCKED',
+              error: sandboxRes.stderr,
+              output: sandboxRes.stdout,
+              blockedReason: sandboxRes.blockedReason,
+              metadata
+            };
+          }
+
+          if (sandboxRes.success) {
+            return {
+              action,
+              capability,
+              status: 'SUCCESS',
+              output: sandboxRes.stdout,
+              metadata
+            };
+          } else {
+            return {
+              action,
+              capability,
+              status: 'FAILED',
+              error: sandboxRes.stderr,
+              output: sandboxRes.stdout,
+              metadata
+            };
+          }
         } catch (err: any) {
-          const stdout = err.stdout ? String(err.stdout) : '';
-          const stderr = err.stderr ? String(err.stderr) : '';
-          const isTimeout = (err.killed && err.signal === 'SIGTERM') || err.code === 'ETIMEDOUT';
-          const msg = isTimeout
-            ? `Command timed out after ${timeoutMs}ms`
-            : stderr.trim() || stdout.trim() || err.message;
           return {
             action,
             capability,
             status: 'FAILED',
-            error: msg,
-            output: stdout,
+            error: err.message,
             metadata: { executable: check.executable, args: check.args }
           };
         }
@@ -405,7 +454,9 @@ export class ActionExecutor {
           args: tokenized.args || [],
           exitCode: res.status === 'SUCCESS' ? 0 : 1,
           stdout: res.output || '',
-          stderr: res.error || ''
+          stderr: res.error || '',
+          isSandboxed: (res.metadata as any)?.isSandboxed,
+          sandboxProvider: (res.metadata as any)?.provider
         });
       }
     }
