@@ -1,4 +1,5 @@
 export * from './types.js';
+export * from './AuthorizationEngine.js';
 export * from './ToolParser.js';
 export * from './ToolRegistry.js';
 export * from './WorkspaceTool.js';

@@ -79,8 +79,11 @@ export interface ActionBatchExecutionResult {
   summary: string;
 }
 
+export type PolicyAuthorizationMode = 'strict' | 'legacy';
+
 export interface ActionPolicy {
   capabilities?: Partial<Record<ExecutionCapability, boolean>>;
+  authorizationMode?: PolicyAuthorizationMode;
   allowFileCreate?: boolean;
   allowFileWrite?: boolean;
   allowFileRead?: boolean;

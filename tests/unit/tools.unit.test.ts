@@ -8,6 +8,7 @@ import { ToolRegistry } from '../../src/tools/ToolRegistry.js';
 import { WorkspaceTool } from '../../src/tools/WorkspaceTool.js';
 import { GitTool } from '../../src/tools/GitTool.js';
 import { NpmTool } from '../../src/tools/NpmTool.js';
+import { AuthorizationEngine } from '../../src/tools/AuthorizationEngine.js';
 
 test('ToolParser - parses semantic tools and maps legacy directives preserving strict global order', () => {
   const sample = `
@@ -106,76 +107,150 @@ test('WorkspaceTool - operations, path traversal and symlink containment', () =>
   }
 });
 
-test('ToolRegistry - Strict Fail-Closed capability evaluation & telemetry propagation', () => {
-  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-v5-policy-'));
+test('AuthorizationEngine V5.2 - Canonical Capability Authority & Strict Mode rules', () => {
+  // 1. Explicit true allows
+  const engine1 = new AuthorizationEngine({
+    capabilities: { 'workspace.read': true }
+  });
+  const d1 = engine1.evaluate('workspace.read');
+  assert.equal(d1.allowed, true);
+  assert.equal(d1.capability, 'workspace.read');
+
+  // 2. Explicit false blocks
+  const engine2 = new AuthorizationEngine({
+    capabilities: { 'workspace.write': false }
+  });
+  const d2 = engine2.evaluate('workspace.write');
+  assert.equal(d2.allowed, false);
+  assert.equal(d2.blockedReason, 'CAPABILITY_POLICY_DENIED');
+
+  // 3. Missing capability blocks (Fail-Closed)
+  const engine3 = new AuthorizationEngine({
+    capabilities: { 'workspace.read': true }
+  });
+  const d3 = engine3.evaluate('npm.test');
+  assert.equal(d3.allowed, false);
+  assert.equal(d3.blockedReason, 'CAPABILITY_POLICY_DENIED');
+
+  // 4. Legacy booleans CANNOT reopen permissions when capabilities is present
+  const engine4 = new AuthorizationEngine({
+    capabilities: {},
+    allowExec: true,
+    allowFileRead: true,
+    allowFileWrite: true,
+    allowFileDelete: true
+  });
+  assert.equal(engine4.evaluate('process.exec').allowed, false);
+  assert.equal(engine4.evaluate('workspace.read').allowed, false);
+  assert.equal(engine4.evaluate('workspace.write').allowed, false);
+  assert.equal(engine4.evaluate('workspace.delete').allowed, false);
+
+  // 5. Mixed policy: explicit false in capabilities overrides any legacy boolean
+  const engine5 = new AuthorizationEngine({
+    capabilities: {
+      'workspace.read': true,
+      'workspace.write': false
+    },
+    allowFileWrite: true
+  });
+  assert.equal(engine5.evaluate('workspace.read').allowed, true);
+  assert.equal(engine5.evaluate('workspace.write').allowed, false);
+
+  // 6. Explicit Legacy Mode opt-in vs Strict Mode default without capabilities
+  const engineStrictDefault = new AuthorizationEngine({
+    allowFileRead: true,
+    allowExec: true
+  });
+  // In strict mode without capabilities declared, it fails closed:
+  assert.equal(engineStrictDefault.evaluate('workspace.read').allowed, false);
+  assert.equal(engineStrictDefault.evaluate('process.exec').allowed, false);
+
+  const engineExplicitLegacy = new AuthorizationEngine({
+    authorizationMode: 'legacy',
+    allowFileRead: true,
+    allowExec: true
+  });
+  // Only with authorizationMode: 'legacy' do legacy booleans apply:
+  assert.equal(engineExplicitLegacy.evaluate('workspace.read').allowed, true);
+  assert.equal(engineExplicitLegacy.evaluate('process.exec').allowed, true);
+  assert.equal(engineExplicitLegacy.evaluate('workspace.delete').allowed, false);
+});
+
+test('ToolRegistry V5.2 - End-to-end authorization, no adapter bypass, and telemetry', () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-v5-reg-'));
 
   const registry = new ToolRegistry({
     capabilities: {
       'workspace.read': true,
       'workspace.write': true,
-      'workspace.delete': false, // Explicit false
+      'workspace.delete': false,
       'git.read': true
-      // git.mutate, process.exec, npm.* are MISSING -> must fail-closed (BLOCK)
-    }
+      // git.mutate and process.exec are missing -> blocked
+    },
+    allowExec: true,
+    allowFileDelete: true // Legacy booleans present but CANNOT reopen permissions
   });
 
   try {
-    // 1. True capability allows
+    // 1. Allowed request
     const writeRes = registry.executeRequest(tmpRoot, {
       tool: 'workspace',
       operation: 'write',
-      args: { path: 'data.txt', content: 'test' }
-    }, { runId: 'run-123', turn: 4, provider: 'gpt' });
+      args: { path: 'file.txt', content: 'hello' }
+    }, { runId: 'run-v5-2', turn: 1, provider: 'gpt' });
 
     assert.equal(writeRes.result.status, 'SUCCESS');
     assert.equal(writeRes.telemetry.policyDecision, 'ALLOW');
-    assert.equal(writeRes.telemetry.runId, 'run-123');
-    assert.equal(writeRes.telemetry.turn, 4);
+    assert.equal(writeRes.telemetry.runId, 'run-v5-2');
+    assert.equal(writeRes.telemetry.turn, 1);
 
-    // 2. Explicit false capability blocks
+    // 2. Denied request (explicit false) - verify adapter was never bypassed
     const delRes = registry.executeRequest(tmpRoot, {
       tool: 'workspace',
       operation: 'delete',
-      args: { path: 'data.txt' }
+      args: { path: 'file.txt' }
     });
     assert.equal(delRes.result.status, 'BLOCKED');
     assert.equal(delRes.result.blockedReason, 'CAPABILITY_POLICY_DENIED');
     assert.equal(delRes.telemetry.policyDecision, 'BLOCK');
+    // File must still exist on disk (proving no bypass occurred):
+    assert.equal(fs.existsSync(path.join(tmpRoot, 'file.txt')), true);
 
-    // 3. Missing capability blocks (Fail-Closed)
+    // 3. Denied request (missing capability)
     const commitRes = registry.executeRequest(tmpRoot, {
       tool: 'git',
       operation: 'commit',
-      args: { message: 'nope' }
+      args: { message: 'bypass test' }
     });
     assert.equal(commitRes.result.status, 'BLOCKED');
     assert.equal(commitRes.result.blockedReason, 'CAPABILITY_POLICY_DENIED');
 
+    // 4. Missing process.exec capability blocked despite allowExec: true
     const execRes = registry.executeRequest(tmpRoot, {
       tool: 'process',
       operation: 'exec',
-      args: { command: 'echo "hi"' }
+      args: { command: 'echo "should be blocked"' }
     });
     assert.equal(execRes.result.status, 'BLOCKED');
     assert.equal(execRes.result.blockedReason, 'CAPABILITY_POLICY_DENIED');
 
-    // 4. Unknown operation blocked with UNKNOWN_OPERATION
-    const unkOpRes = registry.executeRequest(tmpRoot, {
+    // 5. Unknown operation blocked with UNKNOWN_OPERATION
+    const unkOp = registry.executeRequest(tmpRoot, {
       tool: 'workspace',
-      operation: 'formatHardDrive',
+      operation: 'reformatOS',
       args: {}
     });
-    assert.equal(unkOpRes.result.status, 'BLOCKED');
-    assert.equal(unkOpRes.result.blockedReason, 'UNKNOWN_OPERATION');
+    assert.equal(unkOp.result.status, 'BLOCKED');
+    assert.equal(unkOp.result.blockedReason, 'UNKNOWN_OPERATION');
 
-    // 5. Unknown tool blocked with TOOL_NOT_FOUND
-    const unknownRes = registry.executeRequest(tmpRoot, {
-      tool: 'nonexistent',
-      operation: 'doSomething',
+    // 6. Unknown tool blocked with TOOL_NOT_FOUND
+    const unkTool = registry.executeRequest(tmpRoot, {
+      tool: 'shadowTool',
+      operation: 'exec',
       args: {}
     });
-    assert.equal(unknownRes.result.status, 'BLOCKED');
-    assert.equal(unknownRes.result.blockedReason, 'TOOL_NOT_FOUND');
+    assert.equal(unkTool.result.status, 'BLOCKED');
+    assert.equal(unkTool.result.blockedReason, 'TOOL_NOT_FOUND');
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }

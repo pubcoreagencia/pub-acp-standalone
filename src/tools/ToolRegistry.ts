@@ -5,13 +5,16 @@ import { NpmTool } from './NpmTool.js';
 import { NodeTool } from './NodeTool.js';
 import { ProcessTool } from './ProcessTool.js';
 import { ActionPolicy, ExecutionCapability } from '../actions/types.js';
+import { AuthorizationEngine } from './AuthorizationEngine.js';
 
 export class ToolRegistry {
   private readonly adapters = new Map<string, IToolAdapter>();
   private readonly policy: ActionPolicy;
+  private readonly authEngine: AuthorizationEngine;
 
   constructor(policy: ActionPolicy = {}) {
     this.policy = policy;
+    this.authEngine = new AuthorizationEngine(policy);
 
     // Register standard tool adapters
     this.register(new WorkspaceTool());
@@ -29,38 +32,18 @@ export class ToolRegistry {
     return this.adapters.get(toolName.toLowerCase());
   }
 
+  getAuthorizationEngine(): AuthorizationEngine {
+    return this.authEngine;
+  }
+
   /**
-   * Fail-Closed Capability Authorization:
-   * - capability explicitly true  -> ALLOW
-   * - capability explicitly false -> BLOCK
-   * - capability absent           -> BLOCK (NO permissive default fallbacks)
+   * Canonical Capability Evaluation:
+   * Delegated to AuthorizationEngine.
+   * In strict mode (default), capabilities is the SOLE authority.
+   * Missing or false -> false. Legacy booleans CANNOT reopen permissions.
    */
   hasCapability(capability: ExecutionCapability): boolean {
-    if (this.policy.capabilities && this.policy.capabilities[capability] !== undefined) {
-      return this.policy.capabilities[capability] === true;
-    }
-
-    // Strict Fail-Closed: if capabilities map is defined, any absent capability is DENIED
-    if (this.policy.capabilities) {
-      return false;
-    }
-
-    // Legacy ActionPolicy booleans support (only if capabilities dictionary wasn't supplied)
-    switch (capability) {
-      case 'workspace.read':
-      case 'workspace.list':
-        return this.policy.allowFileRead === true;
-      case 'workspace.write':
-        return (this.policy.allowFileCreate === true || this.policy.allowFileWrite === true);
-      case 'workspace.delete':
-        return this.policy.allowFileDelete === true;
-      case 'node.exec':
-      case 'process.exec':
-        return this.policy.allowExec === true;
-      default:
-        // Everything else (git.mutate, git.read, npm.*) fails closed unless explicitly granted
-        return false;
-    }
+    return this.authEngine.evaluate(capability).allowed;
   }
 
   executeRequest(
@@ -133,17 +116,17 @@ export class ToolRegistry {
     }
 
     const requiredCapability = adapter.getRequiredCapability(request.operation, request.args);
-    const isAllowed = this.hasCapability(requiredCapability);
+    const authDecision = this.authEngine.evaluate(requiredCapability);
 
-    if (!isAllowed) {
+    if (!authDecision.allowed) {
       const durationMs = Date.now() - start;
       const res: ToolResult = {
         tool: request.tool,
         operation: request.operation,
         capability: requiredCapability,
         status: 'BLOCKED',
-        blockedReason: 'CAPABILITY_POLICY_DENIED',
-        stderr: `Capability "${requiredCapability}" is denied by Policy Engine`,
+        blockedReason: authDecision.blockedReason || 'CAPABILITY_POLICY_DENIED',
+        stderr: authDecision.reason || `Capability "${requiredCapability}" is denied by Policy Engine`,
         durationMs
       };
       const telem: ToolExecutionTelemetry = {
@@ -159,7 +142,7 @@ export class ToolRegistry {
         executionProvider: adapter.name,
         result: 'BLOCKED',
         durationMs,
-        blockedReason: 'CAPABILITY_POLICY_DENIED',
+        blockedReason: authDecision.blockedReason || 'CAPABILITY_POLICY_DENIED',
         legacyExec: request.legacyExec
       };
       return { result: res, telemetry: telem };
