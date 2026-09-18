@@ -16,6 +16,7 @@ import { ExecutionContext, ProjectDefinition } from '../multiproject/types.js';
 import { ProjectCatalogLoader } from '../catalog/ProjectCatalogLoader.js';
 import { IProjectCatalog } from '../catalog/types.js';
 import { FileProjectCatalog } from '../catalog/FileProjectCatalog.js';
+import { BrowserOperator } from '../browser/BrowserOperator.js';
 
 export interface ControlPlaneOptions {
   cwd?: string;
@@ -30,6 +31,7 @@ export interface ControlPlaneOptions {
   resolver?: WorkspaceResolver;
   safetyGate?: SafetyGate;
   engineFactory?: (context: ExecutionContext) => ClosedLoopEngine;
+  browserOperator?: BrowserOperator;
 }
 
 export interface ControlPlane {
@@ -44,6 +46,7 @@ export interface ControlPlane {
   safetyGate: SafetyGate;
   dispatcher: IProjectDispatcher;
   currentProject?: ProjectDefinition;
+  browserOperator: BrowserOperator;
 }
 
 /**
@@ -61,6 +64,7 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
   const sessionStore = options.sessionStore || new AntigravitySessionStore();
   const workspaceLock = options.workspaceLock || new MemoryWorkspaceLock();
   const contextStore = options.contextStore || new MemoryProjectContextStore();
+  const browserOperator = options.browserOperator || new BrowserOperator({ eventBus });
 
   // 2. Multiproject Registry
   const projectRegistry = options.projectRegistry || new ProjectRegistry();
@@ -84,11 +88,16 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
     const ctx = resolution.context;
     const normalizedId = ctx.projectId.toLowerCase();
 
+    const isCatalogActive = Boolean(
+      projectCatalog &&
+      (typeof (projectCatalog as any).getCatalogPath === 'function' ? (projectCatalog as any).getCatalogPath() : true)
+    );
+
     if (projectRegistry.hasProject(normalizedId)) {
       // Re-use authorized project definition from registry
       currentProject = projectRegistry.getProject(normalizedId);
-    } else if (!projectCatalog) {
-      // Compatibility fallback ONLY when NO catalog is configured or active
+    } else if (!isCatalogActive) {
+      // Compatibility fallback ONLY when NO catalog file is configured or active
       currentProject = {
         projectId: ctx.projectId,
         projectName: ctx.projectName,
@@ -100,19 +109,48 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
       };
       projectRegistry.registerProject(currentProject);
     } else {
-      // When catalog is active, uncataloged CWD does NOT get registered or authorized
+      // When catalog file is active, uncataloged CWD does NOT get registered or authorized
       currentProject = undefined;
     }
   }
 
-  // 5. Canonical Engine Factory (connecting ClosedLoopEngine with shared EventBus)
-  const engineFactory = options.engineFactory || ((context: ExecutionContext) =>
-    new ClosedLoopEngine(undefined, undefined, {
+  // 5. Canonical Engine Factory (connecting ClosedLoopEngine with shared EventBus and BrowserOperator)
+  const engineFactory = options.engineFactory || ((context: ExecutionContext) => {
+    const isDirect = (context.executorMode || 'gpt-direct') === 'gpt-direct';
+    const launcherPath = path.resolve(process.cwd(), 'bin', 'mac_sandbox_launcher');
+    const hasMacLauncher = process.platform === 'darwin' && path.isAbsolute(launcherPath);
+
+    return new ClosedLoopEngine(undefined, undefined, {
       cwd: context.workspacePath,
       executionContext: context,
-      eventBus
-    })
-  );
+      executorProvider: isDirect ? 'gpt' : 'antigravity',
+      actionPolicy: {
+        capabilities: {
+          'workspace.read': true,
+          'workspace.write': true,
+          'workspace.delete': true,
+          'workspace.list': true,
+          'git.read': true,
+          'git.mutate': false,
+          'npm.test': true,
+          'npm.build': true,
+          'npm.run': true,
+          'process.exec': true,
+          'browser.status': true,
+          'browser.navigate': true,
+          'browser.read': true,
+          'browser.screenshot': true
+        },
+        sandboxProvider: hasMacLauncher ? 'macos-sandbox' : 'node-permission',
+        allowedExecutables: ['git', 'echo', 'npm', 'node'],
+        disallowShellOperators: true,
+        disallowExternalPathArgs: true,
+        execTimeoutMs: 60000
+      },
+      eventBus,
+      browserOperator
+    });
+  });
 
   // 6. Project Dispatcher
   const dispatcher = new ProjectDispatcher(
@@ -137,6 +175,7 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
     resolver,
     safetyGate,
     dispatcher,
-    currentProject
+    currentProject,
+    browserOperator
   };
 }

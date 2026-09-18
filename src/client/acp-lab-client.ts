@@ -12,7 +12,7 @@ export class AcpLabClient {
   private readonly defaultTimeoutMs: number;
 
   constructor(options: AcpLabClientOptions = {}) {
-    const rawUrl = options.baseUrl || process.env.ACP_LAB_URL || 'http://127.0.0.1:5125';
+    const rawUrl = options.baseUrl || process.env.ACP_LAB_URL || 'http://127.0.0.1:5126';
     this.baseUrl = rawUrl.replace(/\/+$/, '');
     this.defaultTimeoutMs = options.timeoutMs || 120000;
   }

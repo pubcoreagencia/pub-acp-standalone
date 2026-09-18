@@ -18,6 +18,10 @@ export function wireEventBusToRunStore(eventBus: IEventBus, runStore: IRunStore)
         durationMs: 0,
         gptTurns: 0,
         agExecutions: 0,
+        toolExecutions: 0,
+        browserNavigations: 0,
+        browserReads: 0,
+        browserScreenshots: 0,
         corrections: 0,
         tests: {
           build: 'NOT_AVAILABLE',
@@ -60,7 +64,9 @@ export function wireEventBusToRunStore(eventBus: IEventBus, runStore: IRunStore)
           changedFiles: [],
           result: 'NOT_AVAILABLE'
         },
-        events: []
+        events: [],
+        executorMode: (event.details?.executorMode as any) || undefined,
+        provider: (event.details?.provider as string) || undefined
       };
       runStore.saveRun(run);
     }
@@ -75,6 +81,8 @@ export function wireEventBusToRunStore(eventBus: IEventBus, runStore: IRunStore)
           projectName: (event.details?.projectName as string) || run.projectName,
           taskId: (event.details?.taskId as string) || run.taskId,
           project: (event.details?.projectName as string) || (event.details?.project as string) || run.project,
+          executorMode: (event.details?.executorMode as any) || run.executorMode,
+          provider: (event.details?.provider as string) || run.provider,
           workspace: {
             ...run.workspace,
             path: (event.details?.workspacePath as string) || run.workspace.path,
@@ -83,6 +91,13 @@ export function wireEventBusToRunStore(eventBus: IEventBus, runStore: IRunStore)
             branch: (event.details?.branch as string) || run.workspace.branch,
             lastCommit: (event.details?.commit as string) || run.workspace.lastCommit
           }
+        });
+        break;
+
+      case 'EXECUTOR_SELECTED':
+        runStore.updateState(event.runId, 'STARTING', {
+          executorMode: (event.details?.executorMode as any) || run.executorMode,
+          provider: (event.details?.provider as string) || run.provider
         });
         break;
 
@@ -152,6 +167,12 @@ export function wireEventBusToRunStore(eventBus: IEventBus, runStore: IRunStore)
         });
         break;
 
+      case 'TOOL_STARTED':
+        runStore.updateState(event.runId, 'TOOL_RUNNING', {
+          toolExecutions: ((run as any).toolExecutions || 0) + 1
+        });
+        break;
+
       case 'AG_OUTPUT':
         runStore.updateState(event.runId, 'AG_RUNNING', {
           agView: {
@@ -160,6 +181,48 @@ export function wireEventBusToRunStore(eventBus: IEventBus, runStore: IRunStore)
             durationMs: (event.details?.durationMs as number) || run.agView.durationMs
           }
         });
+        break;
+
+      case 'SANDBOX_EXECUTION':
+        runStore.updateState(event.runId, 'TOOL_RUNNING');
+        break;
+
+      case 'TOOL_FINISHED':
+        runStore.updateState(event.runId, 'DIRECT_RUNNING');
+        break;
+
+      case 'BROWSER_CONNECTED':
+        runStore.updateState(event.runId, 'BROWSER_RUNNING');
+        break;
+
+      case 'BROWSER_NAVIGATION_STARTED':
+        runStore.updateState(event.runId, 'BROWSER_RUNNING');
+        break;
+
+      case 'BROWSER_NAVIGATION_FINISHED':
+        runStore.updateState(event.runId, 'DIRECT_RUNNING', {
+          browserNavigations: ((run as any).browserNavigations || 0) + 1
+        });
+        break;
+
+      case 'BROWSER_READ':
+        runStore.updateState(event.runId, 'DIRECT_RUNNING', {
+          browserReads: ((run as any).browserReads || 0) + 1
+        });
+        break;
+
+      case 'BROWSER_SCREENSHOT':
+        runStore.updateState(event.runId, 'DIRECT_RUNNING', {
+          browserScreenshots: ((run as any).browserScreenshots || 0) + 1
+        });
+        break;
+
+      case 'BROWSER_BLOCKED':
+        runStore.updateState(event.runId, 'DIRECT_RUNNING');
+        break;
+
+      case 'BROWSER_ERROR':
+        runStore.updateState(event.runId, 'DIRECT_RUNNING');
         break;
 
       case 'AG_FINISHED':

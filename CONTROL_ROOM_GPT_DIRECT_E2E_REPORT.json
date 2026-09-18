@@ -1,0 +1,46 @@
+{
+  "proofTimestamp": "2026-09-18T17:37:22.613Z",
+  "project": "sagaz-farm-os",
+  "workspacePath": "/Users/user/Documents/pubcore/sagaz-farm-os",
+  "serverUrl": "http://127.0.0.1:51576",
+  "runId": "run-fd6139d2-6d55-49b6-976e-223920ef81cd",
+  "initialRequest": {
+    "projectId": "sagaz-farm-os",
+    "instruction": "Inspecionar status do repositório usando a tool git.status.",
+    "executorMode": "gpt-direct",
+    "maxTurns": 1
+  },
+  "finalRunStatus": "COMPLETED",
+  "executorMode": "gpt-direct",
+  "provider": "gpt",
+  "totalEvents": 16,
+  "eventTypes": [
+    "RUN_CREATED",
+    "EXECUTOR_SELECTED",
+    "PROJECT_RESOLUTION_STARTED",
+    "PROJECT_RESOLVED",
+    "WORKSPACE_VALIDATION_STARTED",
+    "WORKSPACE_VALIDATED",
+    "SAFETY_GATE_STARTED",
+    "SAFETY_GATE_PASSED",
+    "WORKSPACE_LOCK_ACQUIRED",
+    "RUN_STARTED",
+    "GPT_DECISION",
+    "TOOL_STARTED",
+    "SANDBOX_EXECUTION",
+    "TOOL_FINISHED",
+    "RUN_COMPLETED",
+    "WORKSPACE_LOCK_RELEASED"
+  ],
+  "workspaceSummary": {
+    "path": "/Users/user/Documents/pubcore/sagaz-farm-os",
+    "expectedRepo": "pubcoreagencia/sagaz-farm-os",
+    "actualRepo": "pubcoreagencia/sagaz-farm-os",
+    "branch": "main",
+    "changedFiles": [],
+    "fileCount": "NOT_AVAILABLE",
+    "gitStatus": "NOT_AVAILABLE",
+    "lastCommit": "398a629 feat(dashboard): expose eggs-per-bird zootecnic efficiency"
+  },
+  "durationMs": 114406
+}

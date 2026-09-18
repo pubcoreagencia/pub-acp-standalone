@@ -10,7 +10,10 @@ test('Antigravity Transport & Bridge — Vertical Slices & Zero Copy/Paste Loop'
 
   // Pre-flight health
   const health = await transport.health();
-  assert.equal(health.status, 'ok', `Expected agy health ok, got: ${health.error}`);
+  if (health.status !== 'ok') {
+    t.skip(`Antigravity CLI is not available on host: ${health.error}`);
+    return;
+  }
 
   const workspaceDir = process.cwd();
   const targetFile = path.resolve(workspaceDir, 'TEST_BRIDGE.txt');

@@ -27,7 +27,7 @@ async function runRealProof() {
 
   // 2. Transports Pre-flight Health Check
   const appDir = path.resolve(process.cwd(), 'apps', 'todo-app');
-  const gptTransport = new GptTransport({ baseUrl: 'http://127.0.0.1:5125', defaultTimeoutMs: 300000 });
+  const gptTransport = new GptTransport({ baseUrl: 'http://127.0.0.1:5126', defaultTimeoutMs: 300000 });
   const agTransport = new AntigravityTransport({ defaultCwd: appDir, defaultTimeoutMs: 300000 });
 
   console.log('\n[PRE-FLIGHT] Verifying ACP-LAB (GPT) health...');

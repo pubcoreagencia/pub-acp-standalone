@@ -1,5 +1,6 @@
 export type AutonomyEventType =
   | 'RUN_CREATED'
+  | 'EXECUTOR_SELECTED'
   | 'RUN_STARTED'
   | 'PROJECT_RESOLUTION_STARTED'
   | 'PROJECT_RESOLVED'
@@ -12,6 +13,9 @@ export type AutonomyEventType =
   | 'WORKSPACE_LOCK_BLOCKED'
   | 'WORKSPACE_LOCK_RELEASED'
   | 'GPT_DECISION'
+  | 'TOOL_STARTED'
+  | 'TOOL_FINISHED'
+  | 'SANDBOX_EXECUTION'
   | 'AG_STARTED'
   | 'AG_OUTPUT'
   | 'AG_FINISHED'
@@ -20,7 +24,19 @@ export type AutonomyEventType =
   | 'VALIDATION_RESULT'
   | 'CORRECTION'
   | 'DEPLOY_STARTED'
+  | 'DEPLOY_PROGRESS'
+  | 'DEPLOY_COMPLETED'
+  | 'DEPLOY_FAILED'
   | 'DEPLOY_RESULT'
+  | 'BROWSER_VERIFICATION_STARTED'
+  | 'BROWSER_VERIFICATION_COMPLETED'
+  | 'BROWSER_CONNECTED'
+  | 'BROWSER_NAVIGATION_STARTED'
+  | 'BROWSER_NAVIGATION_FINISHED'
+  | 'BROWSER_READ'
+  | 'BROWSER_SCREENSHOT'
+  | 'BROWSER_BLOCKED'
+  | 'BROWSER_ERROR'
   | 'RUN_COMPLETED'
   | 'RUN_FAILED';
 
@@ -28,6 +44,9 @@ export type RunState =
   | 'IDLE'
   | 'STARTING'
   | 'GPT_THINKING'
+  | 'DIRECT_RUNNING'
+  | 'TOOL_RUNNING'
+  | 'BROWSER_RUNNING'
   | 'AG_RUNNING'
   | 'VALIDATING'
   | 'WAITING'
@@ -122,6 +141,10 @@ export interface RunModel {
   durationMs: number;
   gptTurns: number;
   agExecutions: number;
+  toolExecutions?: number;
+  browserNavigations?: number;
+  browserReads?: number;
+  browserScreenshots?: number;
   corrections: number;
   tests: ValidationSummary;
   deployStatus: DeploySummary;
@@ -129,4 +152,6 @@ export interface RunModel {
   gptView: GptDecisionView;
   agView: AntigravityExecutionView;
   events: AutonomyEvent[];
+  executorMode?: 'gpt-direct' | 'gpt-antigravity';
+  provider?: string;
 }

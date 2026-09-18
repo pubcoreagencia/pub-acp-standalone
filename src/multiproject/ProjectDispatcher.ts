@@ -6,7 +6,7 @@ import { ClosedLoopEngine } from '../bridge/ClosedLoopEngine.js';
 import { ClosedLoopRunReport } from '../bridge/types.js';
 import { IEventBus } from '../observability/EventBus.js';
 import { AutonomyEvent } from '../observability/types.js';
-import { ExecutionContext, SafetyBlockReason } from './types.js';
+import { ExecutionContext, ExecutorMode, SafetyBlockReason } from './types.js';
 import { IProjectContextStore, MinimalProjectContext } from '../context/types.js';
 import { ProjectContextError, ProjectContextErrorCode } from '../context/errors.js';
 import { IAntigravitySessionStore } from '../antigravity/types.js';
@@ -23,6 +23,7 @@ export interface DispatchRequest {
   actor?: string;
   maxTurns?: number;
   conversationId?: string;
+  executorMode?: ExecutorMode;
   skipRunCreated?: boolean;
 }
 
@@ -75,6 +76,8 @@ export class ProjectDispatcher implements IProjectDispatcher {
   async dispatch(request: DispatchRequest): Promise<DispatchResult> {
     const runId = request.runId || `run-${randomUUID()}`;
     const taskId = request.taskId || `task-${randomUUID().slice(0, 8)}`;
+    const executorMode = request.executorMode || 'gpt-direct';
+    const provider = executorMode === 'gpt-direct' ? 'gpt' : 'antigravity';
     const now = new Date().toISOString();
 
     // 1. RUN_CREATED (Only emitted if not already created by caller/ControlRoomServer)
@@ -90,10 +93,27 @@ export class ProjectDispatcher implements IProjectDispatcher {
           taskId,
           projectId: request.projectId,
           trigger: request.trigger || 'manual',
-          actor: request.actor || 'system'
+          actor: request.actor || 'system',
+          executorMode,
+          provider
         }
       });
     }
+
+    // 1.1 EXECUTOR_SELECTED
+    this.emitEvent({
+      id: `evt-${randomUUID()}`,
+      runId,
+      timestamp: now,
+      type: 'EXECUTOR_SELECTED',
+      summary: `Executor mode '${executorMode}' selected (provider: ${provider}).`,
+      details: {
+        runId,
+        projectId: request.projectId,
+        executorMode,
+        provider
+      }
+    });
 
     // 2. PROJECT RESOLUTION
     this.emitEvent({
@@ -360,6 +380,9 @@ export class ProjectDispatcher implements IProjectDispatcher {
       // If valid, attach conversationId to context
       safetyResult.context!.conversationId = request.conversationId;
     }
+
+    // Attach executorMode to context
+    safetyResult.context!.executorMode = executorMode;
 
     this.emitEvent({
       id: `evt-${randomUUID()}`,

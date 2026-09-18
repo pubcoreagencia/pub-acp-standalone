@@ -1,5 +1,6 @@
 import { GptTransportStatus } from '../gpt/types.js';
 import { AntigravityExecutionStatus } from '../antigravity/types.js';
+import { ActionPolicy } from '../actions/types.js';
 
 export type LoopStatus =
   | 'PENDING'
@@ -42,6 +43,7 @@ export interface LoopResultEnvelope {
 
 export interface ClosedLoopTurnSummary {
   turn: number;
+  executor_provider: 'antigravity' | 'gpt';
   gpt_request_id?: string;
   antigravity_request_id?: string;
   prompt_sent_to_gpt: string;
@@ -68,6 +70,7 @@ export interface ClosedLoopTurnSummary {
 
 export interface ClosedLoopRunReport {
   loop_id: string;
+  executor_provider: 'antigravity' | 'gpt';
   gpt_session_id: string;
   antigravity_session_id: string;
   antigravity_conversation_id: string | null;
@@ -88,8 +91,11 @@ export interface ClosedLoopRunReport {
 import { IEventBus } from '../observability/EventBus.js';
 export { ExecutionContext } from '../multiproject/types.js';
 import { ExecutionContext } from '../multiproject/types.js';
+import { BrowserOperator } from '../browser/BrowserOperator.js';
 
 export interface ClosedLoopConfig {
+  executorProvider?: 'antigravity' | 'gpt';
+  executorTimeoutMs?: number;
   defaultTimeoutMs?: number;
   cwd?: string;
   effort?: 'low' | 'medium' | 'high';
@@ -97,4 +103,6 @@ export interface ClosedLoopConfig {
   eventBus?: IEventBus;
   projectName?: string;
   executionContext?: ExecutionContext;
+  actionPolicy?: ActionPolicy;
+  browserOperator?: BrowserOperator;
 }

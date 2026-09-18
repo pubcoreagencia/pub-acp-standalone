@@ -14,17 +14,21 @@ export function normalizeWorkspacePathToUri(rawPath: string): string {
     throw new Error('Invalid workspace path: path must be a non-empty string');
   }
 
+  const trimmed = rawPath.trim();
+  if (/^[a-zA-Z]:[\\/]/.test(trimmed)) {
+    const drive = trimmed[0].toLowerCase();
+    const rest = trimmed.slice(2).replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+    return `file:///${drive}%3A/${rest}`;
+  }
+
   const resolved = resolve(rawPath);
   const url = pathToFileURL(resolved);
   let href = url.href;
 
-  // On Windows, Node's pathToFileURL produces "file:///C:/...".
-  // Antigravity IDE encodes the colon as "%3A" and lowercases the drive letter: "file:///c%3A/..."
   href = href.replace(/^file:\/\/\/([a-zA-Z]):\//, (_, drive) => {
     return `file:///${drive.toLowerCase()}%3A/`;
   });
 
-  // Ensure trailing slashes are stripped for consistent prefix/exact matching
   return href.replace(/\/+$/, '');
 }
 
@@ -39,11 +43,17 @@ export function canonicalizeWorkspacePath(input: string): string | null {
   if (!trimmed) return null;
 
   try {
-    if (trimmed.startsWith('file://')) {
-      const parsedPath = fileURLToPath(trimmed);
-      return resolve(parsedPath).toLowerCase();
+    let normalized = trimmed;
+    if (normalized.startsWith('file://')) {
+      normalized = decodeURIComponent(normalized);
+      normalized = normalized.replace(/^file:\/\/\/?/, '');
     }
-    return resolve(trimmed).toLowerCase();
+    normalized = normalized.replace(/\\/g, '/');
+    if (/^[a-zA-Z]:/.test(normalized)) {
+      normalized = normalized.replace(/^[a-zA-Z]:/, (m) => m.toLowerCase());
+      return normalized.toLowerCase().replace(/\/+$/, '');
+    }
+    return resolve(normalized).toLowerCase().replace(/\/+$/, '');
   } catch {
     return null;
   }

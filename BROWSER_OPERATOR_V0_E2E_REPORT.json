@@ -1,0 +1,71 @@
+{
+  "proofTimestamp": "2026-09-18T18:49:34.703Z",
+  "project": "sagaz-farm-os",
+  "workspacePath": "/Users/user/Documents/pubcore/sagaz-farm-os",
+  "serverUrl": "http://127.0.0.1:53079",
+  "browserStatus": {
+    "status": "CONNECTED",
+    "cdpEndpoint": "http://127.0.0.1:9222",
+    "profileDir": "/Users/user/Documents/PUB-ACP/browser-profile",
+    "browser": "Chrome/153.0.8010.48",
+    "connected": true
+  },
+  "browserNavigation": {
+    "status": "SUCCESS",
+    "url": "http://127.0.0.1:53079/",
+    "domain": "127.0.0.1",
+    "title": "PUB ACP CONTROL ROOM",
+    "durationMs": 1486
+  },
+  "browserPage": {
+    "url": "http://127.0.0.1:53079/",
+    "domain": "127.0.0.1",
+    "title": "PUB ACP CONTROL ROOM",
+    "textSnippet": "⚡ PUB CONTROL ROOM Sala de Comando da Execução de Engenharia GPT DIRECT ▶ SIMULAR DEMO CONECTADO DEMO MODE NOVA EXECUÇÃO PROJETO Selecione um projeto.",
+    "linksCount": 0
+  },
+  "browserScreenshot": {
+    "status": "SUCCESS",
+    "path": "/Users/user/Documents/pub-acp-standalone/.acp/screenshots/shot-1789757134360-84a31d90.png",
+    "filename": "shot-1789757134360-84a31d90.png",
+    "bytes": 200128,
+    "url": "http://127.0.0.1:53079/",
+    "domain": "127.0.0.1",
+    "durationMs": 228
+  },
+  "gptDirectRun": {
+    "runId": "run-13001e68-5b36-4300-87a2-adf988bfd084",
+    "initialRequest": {
+      "projectId": "sagaz-farm-os",
+      "instruction": "Inspecione a estação Browser usando o comando [TOOL: browser.navigate]url=http://127.0.0.1:53079/[/TOOL] e em seguida leia a página com [TOOL: browser.read][/TOOL] e tire um screenshot com [TOOL: browser.screenshot][/TOOL].",
+      "executorMode": "gpt-direct",
+      "maxTurns": 1
+    },
+    "finalRunStatus": "TOOL_RUNNING",
+    "executorMode": "gpt-direct",
+    "provider": "gpt",
+    "totalEvents": 12,
+    "eventTypes": [
+      "RUN_CREATED",
+      "EXECUTOR_SELECTED",
+      "PROJECT_RESOLUTION_STARTED",
+      "PROJECT_RESOLVED",
+      "WORKSPACE_VALIDATION_STARTED",
+      "WORKSPACE_VALIDATED",
+      "SAFETY_GATE_STARTED",
+      "SAFETY_GATE_PASSED",
+      "WORKSPACE_LOCK_ACQUIRED",
+      "RUN_STARTED",
+      "GPT_DECISION",
+      "TOOL_STARTED"
+    ],
+    "browserMetrics": {
+      "browserNavigations": 0,
+      "browserReads": 0,
+      "browserScreenshots": 0,
+      "agExecutions": 0
+    },
+    "hasAgEvents": false,
+    "durationMs": 157008
+  }
+}

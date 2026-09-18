@@ -208,6 +208,74 @@ test('wireEventBusToRunStore - updates store state reactively on bus events', ()
   assert.equal(run?.events.length, 3);
 });
 
+test('wireEventBusToRunStore - gpt-direct mode state and metrics are isolated from AG', () => {
+  const bus = new EventBus();
+  const store = new MemoryRunStore();
+  wireEventBusToRunStore(bus, store);
+
+  bus.publish({
+    id: 'evt-d1',
+    runId: 'RUN-DIRECT',
+    timestamp: new Date().toISOString(),
+    type: 'RUN_STARTED',
+    summary: 'Direct run starting',
+    details: { project: 'Direct App', executorMode: 'gpt-direct', provider: 'gpt' }
+  });
+
+  bus.publish({
+    id: 'evt-d2',
+    runId: 'RUN-DIRECT',
+    timestamp: new Date().toISOString(),
+    type: 'TOOL_STARTED',
+    turn: 1,
+    summary: 'Tool started'
+  });
+
+  let run = store.getRun('RUN-DIRECT');
+  assert.equal(run?.status, 'TOOL_RUNNING');
+  assert.equal(run?.agExecutions, 0);
+  assert.equal(run?.toolExecutions, 1);
+  assert.equal(run?.agView.status, 'IDLE'); // Unpolluted
+
+  bus.publish({
+    id: 'evt-d3',
+    runId: 'RUN-DIRECT',
+    timestamp: new Date().toISOString(),
+    type: 'SANDBOX_EXECUTION',
+    turn: 1,
+    summary: 'Sandbox execution'
+  });
+
+  run = store.getRun('RUN-DIRECT');
+  assert.equal(run?.status, 'TOOL_RUNNING');
+  assert.equal(run?.agExecutions, 0);
+
+  bus.publish({
+    id: 'evt-d4',
+    runId: 'RUN-DIRECT',
+    timestamp: new Date().toISOString(),
+    type: 'TOOL_FINISHED',
+    turn: 1,
+    summary: 'Tool finished'
+  });
+
+  run = store.getRun('RUN-DIRECT');
+  assert.equal(run?.status, 'DIRECT_RUNNING');
+  assert.equal(run?.agExecutions, 0);
+  assert.equal(run?.toolExecutions, 1);
+
+  bus.publish({
+    id: 'evt-d5',
+    runId: 'RUN-DIRECT',
+    timestamp: new Date().toISOString(),
+    type: 'RUN_COMPLETED',
+    summary: 'Run completed'
+  });
+
+  run = store.getRun('RUN-DIRECT');
+  assert.equal(run?.status, 'COMPLETED');
+});
+
 test('DemoFeedGenerator - creates deterministic demo run with clear DEMO flag', async () => {
   const bus = new EventBus();
   const store = new MemoryRunStore();

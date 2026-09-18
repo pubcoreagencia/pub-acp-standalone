@@ -60,6 +60,14 @@
           </div>
 
           <div class="form-group">
+            <label for="select-executor">EXECUTOR</label>
+            <select id="select-executor" class="form-control">
+              <option value="gpt-direct" selected>ACP / GPT DIRECT (Padrão)</option>
+              <option value="gpt-antigravity">GPT → ANTIGRAVITY</option>
+            </select>
+          </div>
+
+          <div class="form-group">
             <label for="select-conversation">CONVERSATION</label>
             <select id="select-conversation" class="form-control">
               <option value="">Nova conversation (Default)</option>
@@ -97,10 +105,13 @@
           <div class="hero-project-name">
             <span id="hero-project-title">Selecione uma execução</span>
             <span id="hero-demo-tag" class="badge-demo-tag hidden">DEMO</span>
+            <span id="hero-executor-tag" class="badge-demo-tag" style="background: rgba(0, 242, 254, 0.15); border-color: var(--accent-cyan); color: var(--accent-cyan);">GPT DIRECT</span>
           </div>
           <div class="hero-subtext">
             <span>Execução: <strong id="hero-run-id" class="monospace">N/A</strong></span>
             <span>Tarefa: <strong id="hero-task-id" class="monospace">N/A</strong></span>
+            <span>Executor: <strong id="hero-executor-mode" class="monospace">gpt-direct</strong></span>
+            <span>Provider: <strong id="hero-executor-provider" class="monospace">gpt</strong></span>
             <span>Tempo: <strong id="hero-duration" class="monospace">0.0s</strong></span>
           </div>
         </div>
@@ -224,6 +235,47 @@
                   </div>
                 </div>
               </div>
+
+              <!-- Browser Station Card -->
+              <div class="tech-card">
+                <h4>ESTAÇÃO OPERACIONAL (BROWSER)</h4>
+                <div class="tech-field">
+                  <span class="field-lbl">CDP Status:</span>
+                  <span id="browser-cdp-pill" class="matrix-pill pass">CONNECTED</span>
+                </div>
+                <div class="tech-field">
+                  <span class="field-lbl">CDP Endpoint:</span>
+                  <span id="browser-cdp-endpoint" class="field-val monospace">http://127.0.0.1:9222</span>
+                </div>
+                <div class="tech-field">
+                  <span class="field-lbl">Perfil Isolado:</span>
+                  <span id="browser-profile-path" class="field-val monospace text-truncate">~/Documents/PUB-ACP/browser-profile</span>
+                </div>
+                <div class="tech-field">
+                  <span class="field-lbl">Página Atual:</span>
+                  <span id="browser-current-url" class="field-val monospace text-truncate">N/A</span>
+                </div>
+                <div class="tech-field-grid">
+                  <div>
+                    <span class="field-lbl">Domínio:</span>
+                    <span id="browser-domain" class="field-val monospace text-truncate">N/A</span>
+                  </div>
+                  <div>
+                    <span class="field-lbl">Título:</span>
+                    <span id="browser-title" class="field-val text-truncate">N/A</span>
+                  </div>
+                </div>
+                <div class="tech-field-grid">
+                  <div>
+                    <span class="field-lbl">Última Nav:</span>
+                    <span id="browser-last-nav" class="field-val monospace">N/A</span>
+                  </div>
+                  <div>
+                    <span class="field-lbl">Screenshot:</span>
+                    <span id="browser-last-screenshot" class="field-val monospace text-truncate">N/A</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- Operational Metrics Bar -->
@@ -235,6 +287,22 @@
               <div class="m-item">
                 <span class="m-lbl">Execuções AG:</span>
                 <span id="metric-ag-executions" class="m-val monospace">0</span>
+              </div>
+              <div class="m-item">
+                <span class="m-lbl">Tools Direct:</span>
+                <span id="metric-tool-executions" class="m-val monospace">0</span>
+              </div>
+              <div class="m-item">
+                <span class="m-lbl">Navs Browser:</span>
+                <span id="metric-browser-navs" class="m-val monospace">0</span>
+              </div>
+              <div class="m-item">
+                <span class="m-lbl">Reads Browser:</span>
+                <span id="metric-browser-reads" class="m-val monospace">0</span>
+              </div>
+              <div class="m-item">
+                <span class="m-lbl">Screenshots:</span>
+                <span id="metric-browser-shots" class="m-val monospace">0</span>
               </div>
               <div class="m-item">
                 <span class="m-lbl">Correções:</span>

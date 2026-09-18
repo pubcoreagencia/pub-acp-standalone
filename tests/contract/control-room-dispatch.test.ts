@@ -498,3 +498,123 @@ test('Hardening Test D - Handled Dispatcher error does not cause duplicate RUN_F
   }
 });
 
+test('ControlRoomServer - executorMode contract tests (Fase 11)', async () => {
+  const registry = new ProjectRegistry();
+  registry.registerProject({
+    projectId: 'exec-mode-proj',
+    projectName: 'Exec Mode Project',
+    workspacePath: process.cwd(),
+    repository: 'pubcoreagencia/exec-mode-repo',
+    defaultBranch: 'main',
+    enabled: true
+  });
+
+  const dispatchedRequests: DispatchRequest[] = [];
+  const mockDispatcher: IProjectDispatcher = {
+    dispatch: async (req: DispatchRequest): Promise<DispatchResult> => {
+      dispatchedRequests.push(req);
+      return { ok: true, runId: req.runId || 'run-mock' };
+    }
+  };
+
+  const eventBus = new EventBus();
+  const runStore = new MemoryRunStore();
+  const server = new ControlRoomServer({
+    port: 0,
+    host: '127.0.0.1',
+    projectRegistry: registry,
+    dispatcher: mockDispatcher,
+    eventBus,
+    runStore
+  });
+
+  const { url } = await server.start();
+
+  try {
+    // 1. POST /api/runs without executorMode -> defaults to gpt-direct (202)
+    const resDefault = await fetch(`${url}/api/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'exec-mode-proj',
+        instruction: 'Default executor run'
+      })
+    });
+    assert.equal(resDefault.status, 202);
+    const bodyDefault = await resDefault.json() as any;
+    assert.ok(bodyDefault.runId);
+
+    await new Promise(r => setTimeout(r, 40));
+    assert.equal(dispatchedRequests.length, 1);
+    assert.equal(dispatchedRequests[0].executorMode, 'gpt-direct');
+
+    const runDefault = runStore.getRun(bodyDefault.runId);
+    assert.ok(runDefault);
+    assert.equal(runDefault?.executorMode, 'gpt-direct');
+    assert.equal(runDefault?.provider, 'gpt');
+
+    // 2. POST /api/runs with executorMode=gpt-direct -> accepted (202)
+    const resDirect = await fetch(`${url}/api/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'exec-mode-proj',
+        instruction: 'Explicit direct run',
+        executorMode: 'gpt-direct'
+      })
+    });
+    assert.equal(resDirect.status, 202);
+    const bodyDirect = await resDirect.json() as any;
+
+    await new Promise(r => setTimeout(r, 40));
+    assert.equal(dispatchedRequests.length, 2);
+    assert.equal(dispatchedRequests[1].executorMode, 'gpt-direct');
+
+    // 3. POST /api/runs with executorMode=gpt-antigravity -> accepted (202)
+    const resAg = await fetch(`${url}/api/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'exec-mode-proj',
+        instruction: 'AG run',
+        executorMode: 'gpt-antigravity'
+      })
+    });
+    assert.equal(resAg.status, 202);
+    const bodyAg = await resAg.json() as any;
+
+    await new Promise(r => setTimeout(r, 40));
+    assert.equal(dispatchedRequests.length, 3);
+    assert.equal(dispatchedRequests[2].executorMode, 'gpt-antigravity');
+    const runAg = runStore.getRun(bodyAg.runId);
+    assert.equal(runAg?.executorMode, 'gpt-antigravity');
+    assert.equal(runAg?.provider, 'antigravity');
+
+    // 4. POST /api/runs with invalid executorMode -> 400
+    const resInvalid = await fetch(`${url}/api/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'exec-mode-proj',
+        instruction: 'Invalid run',
+        executorMode: 'invalid-mode'
+      })
+    });
+    assert.equal(resInvalid.status, 400);
+    const bodyInvalid = await resInvalid.json() as any;
+    assert.ok(bodyInvalid.error);
+    assert.ok(bodyInvalid.error.includes('Invalid executorMode'));
+
+    // 5. Browser status endpoint contract
+    const resBrowser = await fetch(`${url}/api/browser/status`);
+    assert.equal(resBrowser.status, 200);
+    const browserData = await resBrowser.json() as any;
+    assert.ok(browserData.cdpEndpoint);
+    assert.ok(browserData.profileDir);
+    assert.ok(['CONNECTED', 'DISCONNECTED'].includes(browserData.status));
+  } finally {
+    await server.stop();
+  }
+});
+
+
