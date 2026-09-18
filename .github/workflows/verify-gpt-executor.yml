@@ -19,4 +19,4 @@ jobs:
           cache: npm
       - run: npm install
       - run: npm run build
-      - run: npm run test:unit
+      - run: npx tsx --test tests/unit/gpt-executor.unit.test.ts
