@@ -195,17 +195,33 @@ export class MacOSSandboxAdapter implements ProcessSandboxAdapter {
   }
 }
 
+export interface WindowsSandboxAdapterOptions {
+  launcherPath?: string;
+}
+
 /**
  * WindowsSandboxAdapter
  *
  * Architecture & Feasibility Analysis for Windows:
- * - Primitives evaluated: Restricted Token, Job Objects, AppContainer, Windows Sandbox.
- * - Microsoft documentation: AppContainer isolates filesystem/network, CreateProcessInAppContainer API is experimental.
- * - Honest Classification: NOT YET AVAILABLE / LIMITATION without native Win32/C++ Job Object / AppContainer helper.
+ * - Primitives evaluated: Win32 Job Objects, AppContainer, Restricted Token.
+ * - Native Enforcement Specification:
+ *   * Uses bin/win_sandbox_launcher.exe compiled from bin/win_sandbox_launcher.c.
+ *   * Win32 Job Object enforces process tree containment, active process limit (child process containment),
+ *     and tree-wide termination on timeout (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE).
+ * - Fail-Closed Guarantee:
+ *   * If running on non-Windows host (e.g. darwin/linux) or if native launcher binary is missing,
+ *     MUST NOT execute unsandboxed or mask execution.
+ *   * Execution is immediately BLOCKED with blockedReason: 'SANDBOX_UNAVAILABLE' and isSandboxed: false.
  */
 export class WindowsSandboxAdapter implements ProcessSandboxAdapter {
   readonly provider: SandboxProviderType = 'windows-sandbox';
   readonly isPlatformSupported: boolean = process.platform === 'win32';
+
+  private readonly launcherPath: string;
+
+  constructor(options: WindowsSandboxAdapterOptions = {}) {
+    this.launcherPath = options.launcherPath || path.resolve(process.cwd(), 'bin', 'win_sandbox_launcher.exe');
+  }
 
   prepare(workspacePath: string, capabilities: ExecutionCapability[]): SandboxContext {
     return {
@@ -219,9 +235,9 @@ export class WindowsSandboxAdapter implements ProcessSandboxAdapter {
       fsReadPaths: [workspacePath],
       fsWritePaths: [workspacePath],
       metadata: {
-        status: 'LIMITATION',
-        appContainerExperimental: true,
-        jobObjectHelperRequired: true
+        launcherPath: this.launcherPath,
+        launcherExists: fs.existsSync(this.launcherPath),
+        isPlatformSupported: this.isPlatformSupported
       }
     };
   }
@@ -230,21 +246,102 @@ export class WindowsSandboxAdapter implements ProcessSandboxAdapter {
     sandbox: SandboxContext,
     executable: string,
     argv: string[],
-    options?: SandboxExecutionOptions
+    options: SandboxExecutionOptions = {}
   ): SandboxExecutionResult {
-    return {
-      success: false,
-      exitCode: 126,
-      stdout: '',
-      stderr: 'WindowsSandboxAdapter: Native Win32 AppContainer / Job Object helper is not yet deployed on this host. Execution blocked by fail-closed policy.',
-      command: `${executable} ${argv.join(' ')}`,
-      executable,
-      argv,
-      blockedReason: 'WINDOWS_OS_SANDBOX_LIMITATION',
-      isSandboxed: false,
-      provider: this.provider,
-      platform: 'win32'
-    };
+    const cmdString = `${executable} ${argv.join(' ')}`;
+
+    // Fail-Closed: Must be on win32 platform
+    if (!this.isPlatformSupported) {
+      return {
+        success: false,
+        exitCode: 126,
+        stdout: '',
+        stderr: 'WindowsSandboxAdapter: Current host platform is not Windows (win32). Native Windows sandbox enforcement is unavailable on this host.',
+        command: cmdString,
+        executable,
+        argv,
+        blockedReason: 'SANDBOX_UNAVAILABLE',
+        isSandboxed: false,
+        provider: this.provider,
+        platform: process.platform
+      };
+    }
+
+    // Fail-Closed: Native sandbox launcher executable must exist
+    if (!fs.existsSync(this.launcherPath)) {
+      return {
+        success: false,
+        exitCode: 126,
+        stdout: '',
+        stderr: `WindowsSandboxAdapter: Native Windows sandbox launcher not found at "${this.launcherPath}". Native sandbox mechanism is unavailable.`,
+        command: cmdString,
+        executable,
+        argv,
+        blockedReason: 'SANDBOX_UNAVAILABLE',
+        isSandboxed: false,
+        provider: this.provider,
+        platform: 'win32'
+      };
+    }
+
+    const cwd = options.cwd || sandbox.workspacePath;
+    const timeoutMs = options.timeoutMs ?? 30000;
+    const maxBuffer = options.maxBuffer ?? 10 * 1024 * 1024;
+    const allowChildFlag = sandbox.childProcessAllowed ? '1' : '0';
+
+    const launcherArgv = [allowChildFlag, String(timeoutMs), executable, ...argv];
+
+    try {
+      const stdout = execFileSync(this.launcherPath, launcherArgv, {
+        cwd,
+        timeout: timeoutMs + 2000,
+        maxBuffer,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          ...(options.env || {})
+        }
+      });
+
+      return {
+        success: true,
+        exitCode: 0,
+        stdout,
+        stderr: '',
+        command: cmdString,
+        executable,
+        argv,
+        isSandboxed: true,
+        provider: this.provider,
+        platform: 'win32'
+      };
+    } catch (err: any) {
+      const stdout = err.stdout ? String(err.stdout) : '';
+      const stderr = err.stderr ? String(err.stderr) : '';
+      const exitCode = typeof err.status === 'number' ? err.status : 1;
+
+      let blockedReason: string | undefined;
+      if (exitCode === 124 || stderr.includes('timed out')) {
+        blockedReason = 'TIMEOUT';
+      } else if (stderr.includes('Access is denied') || stderr.includes('ERROR_ACCESS_DENIED')) {
+        blockedReason = 'WINDOWS_SANDBOX_ACCESS_DENIED';
+      }
+
+      return {
+        success: false,
+        exitCode,
+        stdout,
+        stderr: stderr.trim() || stdout.trim() || err.message,
+        command: cmdString,
+        executable,
+        argv,
+        blockedReason,
+        isSandboxed: true,
+        provider: this.provider,
+        platform: 'win32'
+      };
+    }
   }
 }
 
