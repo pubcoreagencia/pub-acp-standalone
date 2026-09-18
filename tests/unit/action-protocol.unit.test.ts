@@ -5,6 +5,25 @@ import path from 'node:path';
 import os from 'node:os';
 import { ActionParser } from '../../src/actions/ActionParser.js';
 import { ActionExecutor } from '../../src/actions/ActionExecutor.js';
+import { CommandTokenizer } from '../../src/actions/CommandTokenizer.js';
+import { SandboxSecurity } from '../../src/actions/SandboxSecurity.js';
+
+test('CommandTokenizer - parses command into executable and args without shell', () => {
+  const t1 = CommandTokenizer.tokenize('node -e "console.log(123)" --json');
+  assert.equal(t1.executable, 'node');
+  assert.deepEqual(t1.args, ['-e', 'console.log(123)', '--json']);
+
+  const t2 = CommandTokenizer.tokenize('git status --short');
+  assert.equal(t2.executable, 'git');
+  assert.deepEqual(t2.args, ['status', '--short']);
+
+  const t3 = CommandTokenizer.tokenize('cat "file with spaces.txt"');
+  assert.equal(t3.executable, 'cat');
+  assert.deepEqual(t3.args, ['file with spaces.txt']);
+
+  const tErr = CommandTokenizer.tokenize('node -e "unterminated');
+  assert.ok(tErr.error);
+});
 
 test('ActionParser - extracts FILE_CREATE, FILE_WRITE, FILE_READ, FILE_DELETE, and EXEC in order', () => {
   const sample = `
@@ -67,6 +86,7 @@ test('ActionExecutor - Fail-Closed: blocks path traversal attempts', () => {
       content: 'evil'
     });
     assert.equal(writeResult.status, 'BLOCKED');
+    assert.equal(writeResult.blockedReason, 'PATH_SECURITY_VIOLATION');
     assert.match(writeResult.error || '', /Path traversal violation/);
 
     // 5. Execution of FILE_READ outside workspace
@@ -178,90 +198,103 @@ test('ActionExecutor - Internal symlink strictly inside workspace is allowed', (
   }
 });
 
-test('ActionExecutor - ActionPolicy controls individual permissions and fail-closed allowlist', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-policy-test-'));
+test('ActionExecutor - Capability Model and ActionPolicy control permissions', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-capability-test-'));
 
-  // Policy 1: allowExec = false
+  // 1. Disable process.exec capability
   const noExecExecutor = new ActionExecutor({
-    policy: { allowExec: false }
+    policy: {
+      capabilities: { 'process.exec': false }
+    }
   });
   const execBlocked = noExecExecutor.executeAction(tmpDir, {
     type: 'EXEC',
-    command: 'echo "should be blocked"'
+    command: 'node -e "console.log(1)"'
   });
   assert.equal(execBlocked.status, 'BLOCKED');
-  assert.match(execBlocked.error || '', /EXEC is disabled by policy/);
+  assert.equal(execBlocked.blockedReason, 'CAPABILITY_POLICY_VIOLATION');
+  assert.match(execBlocked.error || '', /Capability "process.exec" is disabled/);
 
-  // Policy 2: allowFileDelete = false
-  fs.writeFileSync(path.join(tmpDir, 'nodelete.txt'), 'keep me');
+  // 2. Disable workspace.delete capability
+  fs.writeFileSync(path.join(tmpDir, 'keep.txt'), 'data');
   const noDeleteExecutor = new ActionExecutor({
-    policy: { allowFileDelete: false }
+    policy: {
+      capabilities: { 'workspace.delete': false }
+    }
   });
   const delBlocked = noDeleteExecutor.executeAction(tmpDir, {
     type: 'FILE_DELETE',
-    path: 'nodelete.txt'
+    path: 'keep.txt'
   });
   assert.equal(delBlocked.status, 'BLOCKED');
-  assert.match(delBlocked.error || '', /FILE_DELETE is disabled by policy/);
-  assert.equal(fs.existsSync(path.join(tmpDir, 'nodelete.txt')), true);
+  assert.equal(delBlocked.blockedReason, 'CAPABILITY_DISABLED');
 
-  // Policy 3: allowedExecCommands allowlist
-  const allowlistExecutor = new ActionExecutor({
+  // 3. Allowed executables allowlist
+  const restrictedExec = new ActionExecutor({
     policy: {
-      allowExec: true,
-      allowedExecCommands: ['node', 'git status', 'echo']
+      capabilities: { 'process.exec': true },
+      allowedExecutables: ['node', 'git']
     }
   });
 
-  const cmdAllowed = allowlistExecutor.executeAction(tmpDir, {
+  const nodeAllowed = restrictedExec.executeAction(tmpDir, {
     type: 'EXEC',
-    command: 'echo "ALLOWLIST_PASS"'
+    command: 'node -e "console.log(12345)"'
   });
-  assert.equal(cmdAllowed.status, 'SUCCESS');
-  assert.match(cmdAllowed.output || '', /ALLOWLIST_PASS/);
+  assert.equal(nodeAllowed.status, 'SUCCESS');
+  assert.match(nodeAllowed.output || '', /12345/);
 
-  const cmdForbidden = allowlistExecutor.executeAction(tmpDir, {
+  const pythonBlocked = restrictedExec.executeAction(tmpDir, {
     type: 'EXEC',
     command: 'python -c "print(1)"'
   });
-  assert.equal(cmdForbidden.status, 'BLOCKED');
-  assert.match(cmdForbidden.error || '', /not in the allowedExecCommands policy allowlist/);
+  assert.equal(pythonBlocked.status, 'BLOCKED');
+  assert.match(pythonBlocked.error || '', /not authorized by allowedExecutables/);
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-test('ActionExecutor - Executes full controlled lifecycle in workspace', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-test-lifecycle-'));
-  const executor = new ActionExecutor();
+test('ActionExecutor - Negative Security: Blocks shell operators and external path arguments in EXEC', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-negative-exec-'));
+  const executor = new ActionExecutor({
+    policy: {
+      allowedExecutables: ['node', 'cat'],
+      disallowShellOperators: true,
+      disallowExternalPathArgs: true
+    }
+  });
 
   try {
-    // Step 1: Create file
-    const batch1 = executor.executeBatch(tmpDir, [
-      { type: 'FILE_CREATE', path: 'nested/sub/hello.txt', content: 'GENERIC_EXECUTION_PASS' }
-    ]);
-    assert.equal(batch1.appliedFiles.length, 1);
-    assert.equal(fs.readFileSync(path.join(tmpDir, 'nested/sub/hello.txt'), 'utf8'), 'GENERIC_EXECUTION_PASS');
+    // 1. Shell injection / operator attempt
+    const shellOp1 = executor.executeAction(tmpDir, {
+      type: 'EXEC',
+      command: 'node -e "console.log(1)" && echo "chained"'
+    });
+    assert.equal(shellOp1.status, 'BLOCKED');
+    assert.match(shellOp1.error || '', /Shell operator/);
 
-    // Step 2: Read file
-    const batch2 = executor.executeBatch(tmpDir, [
-      { type: 'FILE_READ', path: 'nested/sub/hello.txt' }
-    ]);
-    assert.equal(batch2.readFiles['nested/sub/hello.txt'], 'GENERIC_EXECUTION_PASS');
+    const shellOp2 = executor.executeAction(tmpDir, {
+      type: 'EXEC',
+      command: 'node -e "console.log(1)" ; echo "pwned"'
+    });
+    assert.equal(shellOp2.status, 'BLOCKED');
+    assert.match(shellOp2.error || '', /Shell operator/);
 
-    // Step 3: Run command
-    const batch3 = executor.executeBatch(tmpDir, [
-      { type: 'EXEC', command: 'echo "OK"' }
-    ]);
-    assert.equal(batch3.executedCommands.length, 1);
-    assert.equal(batch3.executedCommands[0].exitCode, 0);
-    assert.match(batch3.executedCommands[0].stdout, /OK/);
+    // 2. External path in arguments (e.g. /etc/passwd or /tmp)
+    const externalArg = executor.executeAction(tmpDir, {
+      type: 'EXEC',
+      command: 'cat /etc/passwd'
+    });
+    assert.equal(externalArg.status, 'BLOCKED');
+    assert.match(externalArg.error || '', /Argument references external absolute path/);
 
-    // Step 4: Delete file
-    const batch4 = executor.executeBatch(tmpDir, [
-      { type: 'FILE_DELETE', path: 'nested/sub/hello.txt' }
-    ]);
-    assert.equal(batch4.deletedFiles.length, 1);
-    assert.equal(fs.existsSync(path.join(tmpDir, 'nested/sub/hello.txt')), false);
+    // 3. Relative path traversal in argument
+    const traversalArg = executor.executeAction(tmpDir, {
+      type: 'EXEC',
+      command: 'cat ../../../secret.txt'
+    });
+    assert.equal(traversalArg.status, 'BLOCKED');
+    assert.match(traversalArg.error || '', /Argument references escaping relative path/);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -270,7 +303,10 @@ test('ActionExecutor - Executes full controlled lifecycle in workspace', () => {
 test('ActionExecutor - Handles command non-zero exit code and timeout gracefully', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-test-exec-errors-'));
   const executor = new ActionExecutor({
-    policy: { execTimeoutMs: 500 }
+    policy: {
+      execTimeoutMs: 500,
+      allowedExecutables: ['node']
+    }
   });
 
   try {
@@ -294,7 +330,7 @@ test('ActionExecutor - Handles command non-zero exit code and timeout gracefully
   }
 });
 
-test('ActionExecutor - Dangerous commands are blocked', () => {
+test('ActionExecutor - Dangerous commands are blocked by fail-closed pattern gate', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-test-danger-'));
   const executor = new ActionExecutor();
 

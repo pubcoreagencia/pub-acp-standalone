@@ -1,5 +1,11 @@
 export type ActionType = 'FILE_CREATE' | 'FILE_WRITE' | 'FILE_READ' | 'FILE_DELETE' | 'EXEC';
 
+export type ExecutionCapability =
+  | 'workspace.read'
+  | 'workspace.write'
+  | 'workspace.delete'
+  | 'process.exec';
+
 export interface FileCreateAction {
   type: 'FILE_CREATE';
   path: string;
@@ -36,13 +42,18 @@ export type ActionDirective =
 
 export interface ActionResult {
   action: ActionDirective;
+  capability: ExecutionCapability;
   status: 'SUCCESS' | 'FAILED' | 'BLOCKED';
   output?: string;
   error?: string;
+  blockedReason?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ExecutedCommandResult {
   command: string;
+  executable: string;
+  args: string[];
   exitCode: number;
   stdout: string;
   stderr: string;
@@ -58,11 +69,15 @@ export interface ActionBatchExecutionResult {
 }
 
 export interface ActionPolicy {
+  capabilities?: Partial<Record<ExecutionCapability, boolean>>;
   allowFileCreate?: boolean;
   allowFileWrite?: boolean;
   allowFileRead?: boolean;
   allowFileDelete?: boolean;
   allowExec?: boolean;
   allowedExecCommands?: string[];
+  allowedExecutables?: string[];
+  disallowShellOperators?: boolean;
+  disallowExternalPathArgs?: boolean;
   execTimeoutMs?: number;
 }

@@ -1,13 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import {
   ActionDirective,
   ActionResult,
   ActionBatchExecutionResult,
   ActionPolicy,
+  ExecutionCapability,
   ExecutedCommandResult
 } from './types.js';
+import { CommandTokenizer } from './CommandTokenizer.js';
+import { SandboxSecurity } from './SandboxSecurity.js';
 
 export interface ActionExecutorOptions {
   policy?: ActionPolicy;
@@ -25,24 +28,55 @@ export class ActionExecutor {
   ];
 
   constructor(options: ActionExecutorOptions = {}) {
-    const defaultPolicy: ActionPolicy = {
-      allowFileCreate: true,
-      allowFileWrite: true,
-      allowFileRead: true,
-      allowFileDelete: true,
-      allowExec: options.allowExec ?? options.policy?.allowExec ?? true,
-      allowedExecCommands: options.policy?.allowedExecCommands,
-      execTimeoutMs: options.execTimeoutMs ?? options.policy?.execTimeoutMs ?? 30000
-    };
+    const rawPolicy = options.policy || {};
+
+    const allowExec = rawPolicy.capabilities?.['process.exec'] ??
+      rawPolicy.allowExec ??
+      options.allowExec ??
+      true;
+
+    const allowFileCreate = rawPolicy.capabilities?.['workspace.write'] ??
+      rawPolicy.allowFileCreate ??
+      true;
+
+    const allowFileWrite = rawPolicy.capabilities?.['workspace.write'] ??
+      rawPolicy.allowFileWrite ??
+      true;
+
+    const allowFileRead = rawPolicy.capabilities?.['workspace.read'] ??
+      rawPolicy.allowFileRead ??
+      true;
+
+    const allowFileDelete = rawPolicy.capabilities?.['workspace.delete'] ??
+      rawPolicy.allowFileDelete ??
+      true;
 
     this.policy = {
-      ...defaultPolicy,
-      ...options.policy
+      allowFileCreate,
+      allowFileWrite,
+      allowFileRead,
+      allowFileDelete,
+      allowExec,
+      allowedExecCommands: rawPolicy.allowedExecCommands,
+      allowedExecutables: rawPolicy.allowedExecutables,
+      disallowShellOperators: rawPolicy.disallowShellOperators ?? true,
+      disallowExternalPathArgs: rawPolicy.disallowExternalPathArgs ?? true,
+      execTimeoutMs: rawPolicy.execTimeoutMs ?? options.execTimeoutMs ?? 30000,
+      capabilities: {
+        'workspace.read': allowFileRead,
+        'workspace.write': allowFileCreate || allowFileWrite,
+        'workspace.delete': allowFileDelete,
+        'process.exec': allowExec
+      }
     };
   }
 
   getPolicy(): ActionPolicy {
     return { ...this.policy };
+  }
+
+  hasCapability(capability: ExecutionCapability): boolean {
+    return this.policy.capabilities?.[capability] === true;
   }
 
   /**
@@ -112,11 +146,19 @@ export class ActionExecutor {
   }
 
   /**
-   * Validates command against explicit execution policy (allowlist & patterns).
+   * Validates command against capability policy, tokenization, executable allowlist, and argument boundary checks.
    */
-  isCommandAllowed(command: string): { allowed: boolean; reason?: string } {
-    if (!this.policy.allowExec) {
-      return { allowed: false, reason: 'EXEC is disabled by policy (allowExec=false)' };
+  isCommandAllowed(
+    workspaceRoot: string,
+    command: string
+  ): {
+    allowed: boolean;
+    reason?: string;
+    executable?: string;
+    args?: string[];
+  } {
+    if (!this.hasCapability('process.exec')) {
+      return { allowed: false, reason: 'Capability "process.exec" is disabled by policy (allowExec=false)' };
     }
 
     const trimmed = command.trim();
@@ -131,11 +173,39 @@ export class ActionExecutor {
       }
     }
 
-    // 2. If allowedExecCommands list is configured, enforce strict allowlist
+    // 2. Shell metacharacter check (injection prevention)
+    if (this.policy.disallowShellOperators) {
+      const shellCheck = SandboxSecurity.containsShellMetacharacters(trimmed);
+      if (shellCheck.dangerous) {
+        return { allowed: false, reason: `Shell operator "${shellCheck.char}" is blocked by capability sandbox policy` };
+      }
+    }
+
+    // 3. Tokenize command into [executable, ...args]
+    const tokenized = CommandTokenizer.tokenize(trimmed);
+    if (tokenized.error || !tokenized.executable) {
+      return { allowed: false, reason: tokenized.error || 'Failed to tokenize command line' };
+    }
+
+    const { executable, args } = tokenized;
+    const baseExecutable = path.basename(executable);
+
+    // 4. Executable allowlist verification
+    if (this.policy.allowedExecutables && this.policy.allowedExecutables.length > 0) {
+      const allowed = this.policy.allowedExecutables.some(e => e === executable || e === baseExecutable);
+      if (!allowed) {
+        return {
+          allowed: false,
+          reason: `Executable "${executable}" is not authorized by allowedExecutables policy [${this.policy.allowedExecutables.join(', ')}]`
+        };
+      }
+    }
+
+    // 5. Legacy/convenience allowedExecCommands check
     if (this.policy.allowedExecCommands && this.policy.allowedExecCommands.length > 0) {
       const match = this.policy.allowedExecCommands.some(allowed => {
         const allowedTrim = allowed.trim();
-        return trimmed === allowedTrim || trimmed.startsWith(`${allowedTrim} `);
+        return trimmed === allowedTrim || trimmed.startsWith(`${allowedTrim} `) || baseExecutable === allowedTrim;
       });
 
       if (!match) {
@@ -146,101 +216,122 @@ export class ActionExecutor {
       }
     }
 
-    return { allowed: true };
+    // 6. External path arguments boundary check
+    if (this.policy.disallowExternalPathArgs) {
+      for (const arg of args) {
+        const pathCheck = SandboxSecurity.isExternalPathArgument(workspaceRoot, arg);
+        if (pathCheck.external) {
+          return {
+            allowed: false,
+            reason: `Argument security violation: ${pathCheck.reason}`
+          };
+        }
+      }
+    }
+
+    return { allowed: true, executable, args };
   }
 
   executeAction(workspaceRoot: string, action: ActionDirective): ActionResult {
     switch (action.type) {
       case 'FILE_CREATE': {
-        if (!this.policy.allowFileCreate) {
-          return { action, status: 'BLOCKED', error: 'FILE_CREATE is disabled by policy' };
+        const capability: ExecutionCapability = 'workspace.write';
+        if (!this.hasCapability(capability)) {
+          return { action, capability, status: 'BLOCKED', error: 'Capability "workspace.write" disabled', blockedReason: 'CAPABILITY_DISABLED' };
         }
         const check = this.resolvePathInsideWorkspace(workspaceRoot, action.path);
         if (!check.ok || !check.resolvedPath) {
-          return { action, status: 'BLOCKED', error: check.error };
+          return { action, capability, status: 'BLOCKED', error: check.error, blockedReason: 'PATH_SECURITY_VIOLATION' };
         }
         try {
           fs.mkdirSync(path.dirname(check.resolvedPath), { recursive: true });
           fs.writeFileSync(check.resolvedPath, action.content, 'utf8');
           return {
             action,
+            capability,
             status: 'SUCCESS',
             output: `Wrote ${Buffer.byteLength(action.content, 'utf8')} bytes to ${action.path}`
           };
         } catch (err: any) {
-          return { action, status: 'FAILED', error: err.message };
+          return { action, capability, status: 'FAILED', error: err.message };
         }
       }
 
       case 'FILE_WRITE': {
-        if (!this.policy.allowFileWrite) {
-          return { action, status: 'BLOCKED', error: 'FILE_WRITE is disabled by policy' };
+        const capability: ExecutionCapability = 'workspace.write';
+        if (!this.hasCapability(capability)) {
+          return { action, capability, status: 'BLOCKED', error: 'Capability "workspace.write" disabled', blockedReason: 'CAPABILITY_DISABLED' };
         }
         const check = this.resolvePathInsideWorkspace(workspaceRoot, action.path);
         if (!check.ok || !check.resolvedPath) {
-          return { action, status: 'BLOCKED', error: check.error };
+          return { action, capability, status: 'BLOCKED', error: check.error, blockedReason: 'PATH_SECURITY_VIOLATION' };
         }
         try {
           fs.mkdirSync(path.dirname(check.resolvedPath), { recursive: true });
           fs.writeFileSync(check.resolvedPath, action.content, 'utf8');
           return {
             action,
+            capability,
             status: 'SUCCESS',
             output: `Wrote ${Buffer.byteLength(action.content, 'utf8')} bytes to ${action.path}`
           };
         } catch (err: any) {
-          return { action, status: 'FAILED', error: err.message };
+          return { action, capability, status: 'FAILED', error: err.message };
         }
       }
 
       case 'FILE_READ': {
-        if (!this.policy.allowFileRead) {
-          return { action, status: 'BLOCKED', error: 'FILE_READ is disabled by policy' };
+        const capability: ExecutionCapability = 'workspace.read';
+        if (!this.hasCapability(capability)) {
+          return { action, capability, status: 'BLOCKED', error: 'Capability "workspace.read" disabled', blockedReason: 'CAPABILITY_DISABLED' };
         }
         const check = this.resolvePathInsideWorkspace(workspaceRoot, action.path);
         if (!check.ok || !check.resolvedPath) {
-          return { action, status: 'BLOCKED', error: check.error };
+          return { action, capability, status: 'BLOCKED', error: check.error, blockedReason: 'PATH_SECURITY_VIOLATION' };
         }
         try {
           if (!fs.existsSync(check.resolvedPath)) {
-            return { action, status: 'FAILED', error: `File not found: ${action.path}` };
+            return { action, capability, status: 'FAILED', error: `File not found: ${action.path}` };
           }
           const content = fs.readFileSync(check.resolvedPath, 'utf8');
-          return { action, status: 'SUCCESS', output: content };
+          return { action, capability, status: 'SUCCESS', output: content };
         } catch (err: any) {
-          return { action, status: 'FAILED', error: err.message };
+          return { action, capability, status: 'FAILED', error: err.message };
         }
       }
 
       case 'FILE_DELETE': {
-        if (!this.policy.allowFileDelete) {
-          return { action, status: 'BLOCKED', error: 'FILE_DELETE is disabled by policy' };
+        const capability: ExecutionCapability = 'workspace.delete';
+        if (!this.hasCapability(capability)) {
+          return { action, capability, status: 'BLOCKED', error: 'Capability "workspace.delete" disabled', blockedReason: 'CAPABILITY_DISABLED' };
         }
         const check = this.resolvePathInsideWorkspace(workspaceRoot, action.path);
         if (!check.ok || !check.resolvedPath) {
-          return { action, status: 'BLOCKED', error: check.error };
+          return { action, capability, status: 'BLOCKED', error: check.error, blockedReason: 'PATH_SECURITY_VIOLATION' };
         }
         try {
           if (fs.existsSync(check.resolvedPath)) {
             fs.unlinkSync(check.resolvedPath);
-            return { action, status: 'SUCCESS', output: `Deleted ${action.path}` };
+            return { action, capability, status: 'SUCCESS', output: `Deleted ${action.path}` };
           }
-          return { action, status: 'SUCCESS', output: `File already absent: ${action.path}` };
+          return { action, capability, status: 'SUCCESS', output: `File already absent: ${action.path}` };
         } catch (err: any) {
-          return { action, status: 'FAILED', error: err.message };
+          return { action, capability, status: 'FAILED', error: err.message };
         }
       }
 
       case 'EXEC': {
+        const capability: ExecutionCapability = 'process.exec';
         const cmd = action.command.trim();
-        const check = this.isCommandAllowed(cmd);
-        if (!check.allowed) {
-          return { action, status: 'BLOCKED', error: check.reason };
+        const check = this.isCommandAllowed(workspaceRoot, cmd);
+        if (!check.allowed || !check.executable || !check.args) {
+          return { action, capability, status: 'BLOCKED', error: check.reason, blockedReason: 'CAPABILITY_POLICY_VIOLATION' };
         }
 
         const timeoutMs = this.policy.execTimeoutMs ?? 30000;
         try {
-          const stdout = execSync(cmd, {
+          // Execute with direct binary invocation without shell (shell: false)
+          const stdout = execFileSync(check.executable, check.args, {
             cwd: workspaceRoot,
             timeout: timeoutMs,
             encoding: 'utf8',
@@ -250,7 +341,13 @@ export class ActionExecutor {
               PWD: workspaceRoot
             }
           });
-          return { action, status: 'SUCCESS', output: stdout };
+          return {
+            action,
+            capability,
+            status: 'SUCCESS',
+            output: stdout,
+            metadata: { executable: check.executable, args: check.args }
+          };
         } catch (err: any) {
           const stdout = err.stdout ? String(err.stdout) : '';
           const stderr = err.stderr ? String(err.stderr) : '';
@@ -258,12 +355,25 @@ export class ActionExecutor {
           const msg = isTimeout
             ? `Command timed out after ${timeoutMs}ms`
             : stderr.trim() || stdout.trim() || err.message;
-          return { action, status: 'FAILED', error: msg, output: stdout };
+          return {
+            action,
+            capability,
+            status: 'FAILED',
+            error: msg,
+            output: stdout,
+            metadata: { executable: check.executable, args: check.args }
+          };
         }
       }
 
       default: {
-        return { action: action as any, status: 'BLOCKED', error: `Unknown action type` };
+        return {
+          action: action as any,
+          capability: 'process.exec',
+          status: 'BLOCKED',
+          error: `Unknown action type`,
+          blockedReason: 'UNKNOWN_ACTION_TYPE'
+        };
       }
     }
   }
@@ -288,8 +398,11 @@ export class ActionExecutor {
       } else if (action.type === 'FILE_DELETE') {
         if (res.status === 'SUCCESS') deletedFiles.push(action.path);
       } else if (action.type === 'EXEC') {
+        const tokenized = CommandTokenizer.tokenize(action.command);
         executedCommands.push({
           command: action.command,
+          executable: tokenized.executable || 'unknown',
+          args: tokenized.args || [],
           exitCode: res.status === 'SUCCESS' ? 0 : 1,
           stdout: res.output || '',
           stderr: res.error || ''
@@ -317,9 +430,9 @@ export class ActionExecutor {
     }
     for (const r of results) {
       if (r.status === 'BLOCKED') {
-        summaryLines.push(`[SECURITY_BLOCKED: ${(r.action as any).path || (r.action as any).command} - ${r.error}]`);
+        summaryLines.push(`[SECURITY_BLOCKED (${r.capability}): ${(r.action as any).path || (r.action as any).command} - ${r.error}]`);
       } else if (r.status === 'FAILED' && r.action.type !== 'EXEC') {
-        summaryLines.push(`[ACTION_ERROR: ${(r.action as any).path} - ${r.error}]`);
+        summaryLines.push(`[ACTION_ERROR (${r.capability}): ${(r.action as any).path} - ${r.error}]`);
       }
     }
 
