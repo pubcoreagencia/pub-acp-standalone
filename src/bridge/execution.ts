@@ -45,7 +45,7 @@ export class AntigravityExecutionTransport implements IExecutionTransport {
     return {
       request_id: r.request_id,
       session_id: r.session_id,
-      status: r.status,
+      status: r.status === 'COMPLETED' ? 'COMPLETED' : r.status === 'TIMEOUT' ? 'TIMEOUT' : r.status === 'HUMAN_REQUIRED' ? 'HUMAN_REQUIRED' : 'FAILED',
       response: r.response,
       duration_ms: r.duration_ms,
       error: r.error,
