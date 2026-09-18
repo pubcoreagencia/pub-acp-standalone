@@ -42,6 +42,7 @@ export interface LoopResultEnvelope {
 
 export interface ClosedLoopTurnSummary {
   turn: number;
+  executor_provider: 'antigravity' | 'gpt';
   gpt_request_id?: string;
   antigravity_request_id?: string;
   prompt_sent_to_gpt: string;
@@ -67,7 +68,8 @@ export interface ClosedLoopTurnSummary {
 }
 
 export interface ClosedLoopRunReport {
-  loop_id: string;
+  loop_id:
+ string;
   gpt_session_id: string;
   antigravity_session_id: string;
   antigravity_conversation_id: string | null;
