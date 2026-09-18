@@ -8,6 +8,7 @@ import {
   IExecutionTransport
 } from './execution.js';
 import { ClosedLoopConfig, ClosedLoopRunReport, ClosedLoopTurnSummary } from './types.js';
+import { ExecutionContext } from '../multiproject/types.js';
 
 export class ClosedLoopEngine {
   private readonly gptTransport: IGptTransport;
@@ -75,6 +76,9 @@ export class ClosedLoopEngine {
       agSessionId?: string;
       turnPromptBuilder?: (prevExecutorResponse: string, turn: number) => string;
       stopCondition?: (executorResponse: string, turn: number) => boolean;
+      executionContext?: ExecutionContext;
+      cwd?: string;
+      conversationId?: string;
     } = {}
   ): Promise<ClosedLoopRunReport> {
     const loopId = options.loopId || `loop-${randomUUID()}`;
@@ -84,6 +88,8 @@ export class ClosedLoopEngine {
       `${this.executorProvider}-executor-${randomUUID()}`;
     const startedAt = new Date().toISOString();
     const overallStartTime = Date.now();
+    const effectiveCwd = options.cwd || options.executionContext?.workspacePath || this.config.cwd;
+    const effectiveConversationId = options.conversationId || options.executionContext?.conversationId;
 
     const turnSummaries: ClosedLoopTurnSummary[] = [];
     let currentExecutorResponse = '';
@@ -157,7 +163,7 @@ export class ClosedLoopEngine {
 
       const executorResult = await this.executor.executeTurn(executorSessionId, instructionForExecutor, {
         request_id: executorRequestId,
-        cwd: this.config.cwd,
+        cwd: effectiveCwd,
         effort: this.config.effort,
         model: this.config.model,
         timeout_ms: this.config.executorTimeoutMs
