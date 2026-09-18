@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { ActionExecutor } from '../../src/actions/ActionExecutor.js';
 import { NodeProcessSandbox } from '../../src/actions/sandbox/NodeProcessSandbox.js';
-import { MacOSSandboxAdapter } from '../../src/actions/sandbox/PlatformSandboxAdapters.js';
+import { MacOSSandboxAdapter, WindowsSandboxAdapter, LinuxSandboxAdapter } from '../../src/actions/sandbox/PlatformSandboxAdapters.js';
 
 test('NodeProcessSandbox - prepares correct context and restricts fs to workspace', () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-sandbox-prep-'));
@@ -186,7 +186,10 @@ test('Process Sandbox - Node Permission Model: [PASS] network and workers denied
 
 test('Process Sandbox - Platform Adapter: Fail-closed on missing OS-level helper', () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-macos-os-failclose-'));
-  const macOsSandbox = new MacOSSandboxAdapter();
+  // MacOS adapter pointing to non-existent launcher binary must fail closed with SANDBOX_UNAVAILABLE
+  const macOsSandbox = new MacOSSandboxAdapter({
+    launcherPath: '/nonexistent/helper'
+  });
   const executor = new ActionExecutor({
     policy: {
       capabilities: { 'process.exec': true },
@@ -202,8 +205,8 @@ test('Process Sandbox - Platform Adapter: Fail-closed on missing OS-level helper
     });
 
     assert.equal(res.status, 'BLOCKED');
-    assert.equal(res.blockedReason, 'MACOS_OS_SANDBOX_LIMITATION');
-    assert.match(res.error || '', /fail-closed/);
+    assert.equal(res.blockedReason, 'SANDBOX_UNAVAILABLE');
+    assert.match(res.error || '', /unavailable|not found/i);
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
