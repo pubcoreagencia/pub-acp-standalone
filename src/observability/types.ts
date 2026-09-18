@@ -30,6 +30,13 @@ export type AutonomyEventType =
   | 'DEPLOY_RESULT'
   | 'BROWSER_VERIFICATION_STARTED'
   | 'BROWSER_VERIFICATION_COMPLETED'
+  | 'BROWSER_CONNECTED'
+  | 'BROWSER_NAVIGATION_STARTED'
+  | 'BROWSER_NAVIGATION_FINISHED'
+  | 'BROWSER_READ'
+  | 'BROWSER_SCREENSHOT'
+  | 'BROWSER_BLOCKED'
+  | 'BROWSER_ERROR'
   | 'RUN_COMPLETED'
   | 'RUN_FAILED';
 
@@ -39,6 +46,7 @@ export type RunState =
   | 'GPT_THINKING'
   | 'DIRECT_RUNNING'
   | 'TOOL_RUNNING'
+  | 'BROWSER_RUNNING'
   | 'AG_RUNNING'
   | 'VALIDATING'
   | 'WAITING'
@@ -134,6 +142,9 @@ export interface RunModel {
   gptTurns: number;
   agExecutions: number;
   toolExecutions?: number;
+  browserNavigations?: number;
+  browserReads?: number;
+  browserScreenshots?: number;
   corrections: number;
   tests: ValidationSummary;
   deployStatus: DeploySummary;

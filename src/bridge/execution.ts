@@ -112,6 +112,13 @@ content=conteudo
 [TOOL: npm.test][/TOOL]
 [TOOL: npm.build][/TOOL]
 
+[TOOL: browser.status][/TOOL]
+[TOOL: browser.navigate]
+url=http://127.0.0.1:...
+[/TOOL]
+[TOOL: browser.read][/TOOL]
+[TOOL: browser.screenshot][/TOOL]
+
 2. Diretivas Legadas (Compatibilidade V1-V4):
 [FILE_CREATE: <caminho_relativo>]
 <conteúdo_do_arquivo>
@@ -144,7 +151,7 @@ Ao finalizar, confirme as ações executadas e o resultado.`;
     let executedTelemetry: any[] = [];
 
     if (toolRequests.length > 0) {
-      const toolBatch = this.toolRegistry.executeBatch(cwd, toolRequests, {
+      const toolBatch = await this.toolRegistry.executeBatch(cwd, toolRequests, {
         runId: currentRunId,
         turn: currentTurn,
         provider: 'gpt'

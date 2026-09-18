@@ -44,6 +44,11 @@ const elDeployTime = document.getElementById('deploy-time');
 const elBrowserCdpPill = document.getElementById('browser-cdp-pill');
 const elBrowserCdpEndpoint = document.getElementById('browser-cdp-endpoint');
 const elBrowserProfilePath = document.getElementById('browser-profile-path');
+const elBrowserCurrentUrl = document.getElementById('browser-current-url');
+const elBrowserDomain = document.getElementById('browser-domain');
+const elBrowserTitle = document.getElementById('browser-title');
+const elBrowserLastNav = document.getElementById('browser-last-nav');
+const elBrowserLastScreenshot = document.getElementById('browser-last-screenshot');
 
 const elWsPath = document.getElementById('ws-path');
 const elWsActualRepo = document.getElementById('ws-actual-repo');
@@ -54,6 +59,9 @@ const elWsGitStatus = document.getElementById('ws-git-status');
 const elMetricGptTurns = document.getElementById('metric-gpt-turns');
 const elMetricAgExecutions = document.getElementById('metric-ag-executions');
 const elMetricToolExecutions = document.getElementById('metric-tool-executions');
+const elMetricBrowserNavs = document.getElementById('metric-browser-navs');
+const elMetricBrowserReads = document.getElementById('metric-browser-reads');
+const elMetricBrowserShots = document.getElementById('metric-browser-shots');
 const elMetricCorrections = document.getElementById('metric-corrections');
 
 // Compatibility elements (hidden, used by existing test assertions)
@@ -72,6 +80,7 @@ const statusLabelsPt = {
   'GPT_THINKING': 'GPT PENSANDO',
   'DIRECT_RUNNING': 'GPT DIRECT',
   'TOOL_RUNNING': 'EXECUTANDO TOOLS',
+  'BROWSER_RUNNING': 'NAVEGADOR OPERANDO',
   'AG_RUNNING': 'AG EXECUTANDO',
   'VALIDATING': 'VALIDANDO',
   'WAITING': 'AGUARDANDO',
@@ -451,6 +460,86 @@ function createCardForEvent(event) {
       return card;
     }
 
+    case 'BROWSER_CONNECTED': {
+      card.className = 'flow-card flow-card-browser';
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title" style="color: #63b3ed">🌐 Browser Conectado</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>';
+      return card;
+    }
+
+    case 'BROWSER_NAVIGATION_STARTED':
+    case 'BROWSER_NAVIGATION_FINISHED': {
+      card.className = 'flow-card flow-card-browser';
+      const urlText = (event.details && (event.details.url || event.details.domain)) ? ` [${event.details.url || event.details.domain}]` : '';
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title" style="color: #63b3ed">🌐 Browser Navigation' + escapeHtml(urlText) + '</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>';
+      return card;
+    }
+
+    case 'BROWSER_READ': {
+      card.className = 'flow-card flow-card-browser';
+      const title = (event.details && event.details.title) ? ` - ${event.details.title}` : '';
+      const textSnippet = (event.details && event.details.text) ? String(event.details.text).slice(0, 500) : '';
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title" style="color: #68d391">👁️ Browser Read' + escapeHtml(title) + '</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>' +
+        (textSnippet ? (
+          '<div class="code-container">' +
+            '<pre class="code-block" id="cb-' + event.id + '">' + escapeHtml(textSnippet) + '</pre>' +
+            '<div class="flow-actions">' +
+              '<button class="flow-btn-link" onclick="toggleExpandCode(\'cb-' + event.id + '\', this)">📖 Ver conteúdo lido</button>' +
+              '<button class="flow-btn-link" onclick="copyCode(\'cb-' + event.id + '\')">📋 Copiar</button>' +
+            '</div>' +
+          '</div>'
+        ) : '');
+      return card;
+    }
+
+    case 'BROWSER_SCREENSHOT': {
+      card.className = 'flow-card flow-card-browser';
+      const shotPath = (event.details && event.details.path) ? String(event.details.path) : '';
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title" style="color: #ecc94b">📸 Browser Screenshot</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + (shotPath ? ` (${escapeHtml(shotPath)})` : '') + '</div>';
+      return card;
+    }
+
+    case 'BROWSER_BLOCKED': {
+      card.className = 'flow-card flow-card-val-fail';
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title" style="color: #fc8181">🛡️ Browser Blocked</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>';
+      return card;
+    }
+
+    case 'BROWSER_ERROR': {
+      card.className = 'flow-card flow-card-val-fail';
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title" style="color: #fc8181">❌ Browser Error</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>';
+      return card;
+    }
+
     case 'RUN_STARTED': {
       card.className = 'flow-card';
       card.innerHTML =
@@ -599,6 +688,9 @@ function renderRunDetail(run) {
   elMetricGptTurns.textContent = run.gptTurns || 0;
   elMetricAgExecutions.textContent = run.agExecutions || 0;
   if (elMetricToolExecutions) elMetricToolExecutions.textContent = run.toolExecutions || 0;
+  if (elMetricBrowserNavs) elMetricBrowserNavs.textContent = run.browserNavigations || 0;
+  if (elMetricBrowserReads) elMetricBrowserReads.textContent = run.browserReads || 0;
+  if (elMetricBrowserShots) elMetricBrowserShots.textContent = run.browserScreenshots || 0;
   elMetricCorrections.textContent = run.corrections || 0;
 
   // Sync hidden compatibility elements for existing test contracts
@@ -832,6 +924,20 @@ async function fetchBrowserStatus() {
     }
     if (elBrowserCdpEndpoint) elBrowserCdpEndpoint.textContent = data.cdpEndpoint || 'http://127.0.0.1:9222';
     if (elBrowserProfilePath) elBrowserProfilePath.textContent = data.profileDir || '~/Documents/PUB-ACP/browser-profile';
+
+    if (data.status === 'CONNECTED') {
+      try {
+        const pageRes = await fetch('/api/browser/page');
+        if (pageRes.ok) {
+          const pageData = await pageRes.json();
+          if (elBrowserCurrentUrl) elBrowserCurrentUrl.textContent = pageData.url || 'N/A';
+          if (elBrowserDomain) elBrowserDomain.textContent = pageData.domain || 'N/A';
+          if (elBrowserTitle) elBrowserTitle.textContent = pageData.title || 'N/A';
+          if (pageData.lastNav && elBrowserLastNav) elBrowserLastNav.textContent = formatTime(pageData.lastNav);
+          if (pageData.lastScreenshot && elBrowserLastScreenshot) elBrowserLastScreenshot.textContent = pageData.lastScreenshot;
+        }
+      } catch {}
+    }
   } catch {
     if (elBrowserCdpPill) {
       elBrowserCdpPill.textContent = 'OFFLINE';

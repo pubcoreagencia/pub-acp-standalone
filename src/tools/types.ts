@@ -1,6 +1,6 @@
 import { ExecutionCapability } from '../actions/types.js';
 
-export type ToolCategory = 'workspace' | 'git' | 'npm' | 'node' | 'process';
+export type ToolCategory = 'workspace' | 'git' | 'npm' | 'node' | 'process' | 'browser';
 
 export interface ToolRequest {
   tool: string;
@@ -53,7 +53,7 @@ export interface IToolAdapter {
     operation: string,
     args: Record<string, unknown>,
     options?: Record<string, unknown>
-  ): ToolResult;
+  ): ToolResult | Promise<ToolResult>;
 }
 
 export interface ToolBatchResult {

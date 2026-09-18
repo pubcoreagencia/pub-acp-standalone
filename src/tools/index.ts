@@ -7,3 +7,4 @@ export * from './GitTool.js';
 export * from './NpmTool.js';
 export * from './NodeTool.js';
 export * from './ProcessTool.js';
+export * from './BrowserTool.js';

@@ -13,7 +13,11 @@ export type ExecutionCapability =
   | 'node.exec'
   | 'process.exec'
   | 'process.child_process'
-  | 'network.outbound';
+  | 'network.outbound'
+  | 'browser.status'
+  | 'browser.navigate'
+  | 'browser.read'
+  | 'browser.screenshot';
 
 export interface FileCreateAction {
   type: 'FILE_CREATE';

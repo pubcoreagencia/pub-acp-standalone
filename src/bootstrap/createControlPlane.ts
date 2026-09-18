@@ -131,7 +131,11 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
           'npm.test': true,
           'npm.build': true,
           'npm.run': true,
-          'process.exec': true
+          'process.exec': true,
+          'browser.status': true,
+          'browser.navigate': true,
+          'browser.read': true,
+          'browser.screenshot': true
         },
         sandboxProvider: hasMacLauncher ? 'macos-sandbox' : 'node-permission',
         allowedExecutables: ['git', 'echo', 'npm', 'node'],

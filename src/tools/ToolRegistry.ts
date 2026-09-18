@@ -4,6 +4,7 @@ import { GitTool } from './GitTool.js';
 import { NpmTool } from './NpmTool.js';
 import { NodeTool } from './NodeTool.js';
 import { ProcessTool } from './ProcessTool.js';
+import { BrowserTool } from './BrowserTool.js';
 import { ActionPolicy, ExecutionCapability } from '../actions/types.js';
 import { AuthorizationEngine } from './AuthorizationEngine.js';
 
@@ -22,6 +23,7 @@ export class ToolRegistry {
     this.register(new NpmTool());
     this.register(new NodeTool());
     this.register(new ProcessTool());
+    this.register(new BrowserTool());
   }
 
   register(adapter: IToolAdapter): void {
@@ -46,11 +48,11 @@ export class ToolRegistry {
     return this.authEngine.evaluate(capability).allowed;
   }
 
-  executeRequest(
+  async executeRequest(
     workspaceRoot: string,
     request: ToolRequest,
     telemetryContext: { runId?: string; turn?: number; provider?: string } = {}
-  ): { result: ToolResult; telemetry: ToolExecutionTelemetry } {
+  ): Promise<{ result: ToolResult; telemetry: ToolExecutionTelemetry }> {
     const start = Date.now();
     const adapter = this.getAdapter(request.tool);
 
@@ -149,7 +151,11 @@ export class ToolRegistry {
     }
 
     try {
-      const toolRes = adapter.execute(workspaceRoot, request.operation, request.args);
+      const toolRes = await adapter.execute(workspaceRoot, request.operation, request.args, {
+        runId: telemetryContext.runId,
+        turn: telemetryContext.turn,
+        provider: telemetryContext.provider
+      });
       const durationMs = Date.now() - start;
       const telem: ToolExecutionTelemetry = {
         runId: telemetryContext.runId,
@@ -198,17 +204,17 @@ export class ToolRegistry {
     }
   }
 
-  executeBatch(
+  async executeBatch(
     workspaceRoot: string,
     requests: ToolRequest[],
     telemetryContext: { runId?: string; turn?: number; provider?: string } = {}
-  ): ToolBatchResult {
+  ): Promise<ToolBatchResult> {
     const results: ToolResult[] = [];
     const telemetries: ToolExecutionTelemetry[] = [];
     const summaryLines: string[] = [];
 
     for (const req of requests) {
-      const { result, telemetry } = this.executeRequest(workspaceRoot, req, telemetryContext);
+      const { result, telemetry } = await this.executeRequest(workspaceRoot, req, telemetryContext);
       results.push(result);
       telemetries.push(telemetry);
 

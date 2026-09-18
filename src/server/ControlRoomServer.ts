@@ -10,6 +10,8 @@ import { IProjectRegistry, ProjectRegistry } from '../multiproject/ProjectRegist
 import { IAntigravitySessionStore } from '../antigravity/types.js';
 import { AntigravitySessionStore } from '../antigravity/AntigravitySessionStore.js';
 import { IProjectDispatcher } from '../multiproject/ProjectDispatcher.js';
+import { BrowserOperator } from '../browser/BrowserOperator.js';
+import { AuthorizationEngine } from '../tools/AuthorizationEngine.js';
 
 export interface ControlRoomServerOptions {
   port?: number;
@@ -20,6 +22,8 @@ export interface ControlRoomServerOptions {
   projectRegistry?: IProjectRegistry;
   sessionStore?: IAntigravitySessionStore;
   dispatcher?: IProjectDispatcher;
+  browserOperator?: BrowserOperator;
+  authorizationEngine?: AuthorizationEngine;
 }
 
 export class ControlRoomServer {
@@ -31,6 +35,8 @@ export class ControlRoomServer {
   private readonly projectRegistry: IProjectRegistry;
   private readonly sessionStore: IAntigravitySessionStore;
   private readonly dispatcher?: IProjectDispatcher;
+  private readonly browserOperator: BrowserOperator;
+  private readonly authorizationEngine: AuthorizationEngine;
   private readonly demoFeed: DemoFeedGenerator;
   private server?: Server;
   private readonly openSockets = new Set<import('node:net').Socket>();
@@ -44,6 +50,15 @@ export class ControlRoomServer {
     this.projectRegistry = options.projectRegistry || new ProjectRegistry();
     this.sessionStore = options.sessionStore || new AntigravitySessionStore();
     this.dispatcher = options.dispatcher;
+    this.browserOperator = options.browserOperator || new BrowserOperator({ eventBus: this.eventBus });
+    this.authorizationEngine = options.authorizationEngine || new AuthorizationEngine({
+      capabilities: {
+        'browser.status': true,
+        'browser.navigate': true,
+        'browser.read': true,
+        'browser.screenshot': true
+      }
+    });
 
     wireEventBusToRunStore(this.eventBus, this.runStore);
     this.demoFeed = new DemoFeedGenerator(this.eventBus, this.runStore);
@@ -340,30 +355,93 @@ export class ControlRoomServer {
 
     // Browser CDP Status Route
     if (pathname === '/api/browser/status' && method === 'GET') {
-      const home = process.env.HOME || '';
-      const defaultProfile = `${home}/Documents/PUB-ACP/browser-profile`;
-      try {
-        const cdpRes = await fetch('http://127.0.0.1:9222/json/version', { signal: AbortSignal.timeout(1500) });
-        if (cdpRes.ok) {
-          const versionData: any = await cdpRes.json();
-          return this.sendJson(res, 200, {
-            status: 'CONNECTED',
-            cdpEndpoint: 'http://127.0.0.1:9222',
-            profileDir: defaultProfile,
-            browser: versionData.Browser || 'Chrome',
-            webSocketDebuggerUrl: versionData.webSocketDebuggerUrl ? 'CONNECTED' : 'DISCONNECTED'
-          });
-        }
-      } catch {
-        // Fall through to disconnected response
+      const auth = this.authorizationEngine.evaluate('browser.status');
+      if (!auth.allowed) {
+        return this.sendJson(res, 403, {
+          error: auth.reason || 'Capability browser.status is denied',
+          blockedReason: auth.blockedReason || 'CAPABILITY_POLICY_DENIED'
+        });
       }
+
+      const status = await this.browserOperator.getStatus();
       return this.sendJson(res, 200, {
-        status: 'DISCONNECTED',
-        cdpEndpoint: 'http://127.0.0.1:9222',
-        profileDir: defaultProfile,
-        browser: 'Chrome (offline)',
-        webSocketDebuggerUrl: 'N/A'
+        status: status.status,
+        cdpEndpoint: status.cdpEndpoint,
+        profileDir: status.profileDir,
+        browser: status.browser,
+        connected: status.connected
       });
+    }
+
+    // POST /api/browser/navigate
+    if (pathname === '/api/browser/navigate' && method === 'POST') {
+      const auth = this.authorizationEngine.evaluate('browser.navigate');
+      if (!auth.allowed) {
+        return this.sendJson(res, 403, {
+          error: auth.reason || 'Capability browser.navigate is denied',
+          blockedReason: auth.blockedReason || 'CAPABILITY_POLICY_DENIED'
+        });
+      }
+
+      let body: any;
+      try {
+        body = await this.readJsonBody(req);
+      } catch (err: any) {
+        return this.sendJson(res, 400, { error: `Malformed request payload: ${err.message}` });
+      }
+
+      if (!body.url || typeof body.url !== 'string' || !body.url.trim()) {
+        return this.sendJson(res, 400, { error: 'Field "url" must be a non-empty string' });
+      }
+
+      const result = await this.browserOperator.navigate(body.url);
+      if (result.status === 'BLOCKED') {
+        return this.sendJson(res, 403, result);
+      }
+      if (result.status === 'FAILED') {
+        return this.sendJson(res, 500, result);
+      }
+      return this.sendJson(res, 200, result);
+    }
+
+    // GET /api/browser/page
+    if (pathname === '/api/browser/page' && method === 'GET') {
+      const auth = this.authorizationEngine.evaluate('browser.read');
+      if (!auth.allowed) {
+        return this.sendJson(res, 403, {
+          error: auth.reason || 'Capability browser.read is denied',
+          blockedReason: auth.blockedReason || 'CAPABILITY_POLICY_DENIED'
+        });
+      }
+
+      const pageState = this.browserOperator.getCurrentPageState();
+      const readResult = await this.browserOperator.read();
+      return this.sendJson(res, 200, {
+        url: readResult.url,
+        domain: readResult.domain,
+        title: readResult.title,
+        text: readResult.text,
+        links: readResult.links,
+        lastNav: pageState.lastNav,
+        lastScreenshot: pageState.lastScreenshot
+      });
+    }
+
+    // POST /api/browser/screenshot
+    if (pathname === '/api/browser/screenshot' && method === 'POST') {
+      const auth = this.authorizationEngine.evaluate('browser.screenshot');
+      if (!auth.allowed) {
+        return this.sendJson(res, 403, {
+          error: auth.reason || 'Capability browser.screenshot is denied',
+          blockedReason: auth.blockedReason || 'CAPABILITY_POLICY_DENIED'
+        });
+      }
+
+      const result = await this.browserOperator.screenshot();
+      if (result.status === 'FAILED') {
+        return this.sendJson(res, 500, result);
+      }
+      return this.sendJson(res, 200, result);
     }
 
     // Project Conversations Discovery Route

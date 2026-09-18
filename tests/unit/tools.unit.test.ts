@@ -176,7 +176,7 @@ test('AuthorizationEngine V5.2 - Canonical Capability Authority & Strict Mode ru
   assert.equal(engineExplicitLegacy.evaluate('workspace.delete').allowed, false);
 });
 
-test('ToolRegistry V5.2 - End-to-end authorization, no adapter bypass, and telemetry', () => {
+test('ToolRegistry V5.2 - End-to-end authorization, no adapter bypass, and telemetry', async () => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-v5-reg-'));
 
   const registry = new ToolRegistry({
@@ -193,7 +193,7 @@ test('ToolRegistry V5.2 - End-to-end authorization, no adapter bypass, and telem
 
   try {
     // 1. Allowed request
-    const writeRes = registry.executeRequest(tmpRoot, {
+    const writeRes = await registry.executeRequest(tmpRoot, {
       tool: 'workspace',
       operation: 'write',
       args: { path: 'file.txt', content: 'hello' }
@@ -205,7 +205,7 @@ test('ToolRegistry V5.2 - End-to-end authorization, no adapter bypass, and telem
     assert.equal(writeRes.telemetry.turn, 1);
 
     // 2. Denied request (explicit false) - verify adapter was never bypassed
-    const delRes = registry.executeRequest(tmpRoot, {
+    const delRes = await registry.executeRequest(tmpRoot, {
       tool: 'workspace',
       operation: 'delete',
       args: { path: 'file.txt' }
@@ -217,7 +217,7 @@ test('ToolRegistry V5.2 - End-to-end authorization, no adapter bypass, and telem
     assert.equal(fs.existsSync(path.join(tmpRoot, 'file.txt')), true);
 
     // 3. Denied request (missing capability)
-    const commitRes = registry.executeRequest(tmpRoot, {
+    const commitRes = await registry.executeRequest(tmpRoot, {
       tool: 'git',
       operation: 'commit',
       args: { message: 'bypass test' }
@@ -226,7 +226,7 @@ test('ToolRegistry V5.2 - End-to-end authorization, no adapter bypass, and telem
     assert.equal(commitRes.result.blockedReason, 'CAPABILITY_POLICY_DENIED');
 
     // 4. Missing process.exec capability blocked despite allowExec: true
-    const execRes = registry.executeRequest(tmpRoot, {
+    const execRes = await registry.executeRequest(tmpRoot, {
       tool: 'process',
       operation: 'exec',
       args: { command: 'echo "should be blocked"' }
@@ -235,7 +235,7 @@ test('ToolRegistry V5.2 - End-to-end authorization, no adapter bypass, and telem
     assert.equal(execRes.result.blockedReason, 'CAPABILITY_POLICY_DENIED');
 
     // 5. Unknown operation blocked with UNKNOWN_OPERATION
-    const unkOp = registry.executeRequest(tmpRoot, {
+    const unkOp = await registry.executeRequest(tmpRoot, {
       tool: 'workspace',
       operation: 'reformatOS',
       args: {}
@@ -244,7 +244,7 @@ test('ToolRegistry V5.2 - End-to-end authorization, no adapter bypass, and telem
     assert.equal(unkOp.result.blockedReason, 'UNKNOWN_OPERATION');
 
     // 6. Unknown tool blocked with TOOL_NOT_FOUND
-    const unkTool = registry.executeRequest(tmpRoot, {
+    const unkTool = await registry.executeRequest(tmpRoot, {
       tool: 'shadowTool',
       operation: 'exec',
       args: {}
