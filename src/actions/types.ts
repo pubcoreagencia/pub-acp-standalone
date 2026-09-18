@@ -4,6 +4,13 @@ export type ExecutionCapability =
   | 'workspace.read'
   | 'workspace.write'
   | 'workspace.delete'
+  | 'workspace.list'
+  | 'git.read'
+  | 'git.mutate'
+  | 'npm.test'
+  | 'npm.build'
+  | 'npm.run'
+  | 'node.exec'
   | 'process.exec'
   | 'process.child_process'
   | 'network.outbound';

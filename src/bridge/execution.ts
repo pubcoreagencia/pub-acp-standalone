@@ -1,6 +1,7 @@
 import { GptTransport, IGptTransport, GptPromptResponse } from '../gpt/index.js';
 import { AntigravityBridge, IAntigravityTransport, AntigravityTransport } from '../antigravity/index.js';
-import { ActionParser, ActionExecutor, ActionExecutorOptions } from '../actions/index.js';
+import { ActionParser, ActionExecutor, ActionExecutorOptions, ActionPolicy } from '../actions/index.js';
+import { ToolParser, ToolRegistry } from '../tools/index.js';
 
 export type ExecutionProviderKind = 'antigravity' | 'gpt';
 
@@ -62,10 +63,12 @@ export class AntigravityExecutionTransport implements IExecutionTransport {
 export class GptExecutionTransport implements IExecutionTransport {
   private readonly transport: IGptTransport;
   private readonly executor: ActionExecutor;
+  private readonly toolRegistry: ToolRegistry;
 
   constructor(transport?: IGptTransport, executorOptions?: ActionExecutorOptions) {
     this.transport = transport || new GptTransport();
     this.executor = new ActionExecutor(executorOptions);
+    this.toolRegistry = new ToolRegistry(executorOptions?.policy);
   }
 
   async health(timeoutMs = 5000): Promise<{ status: 'ok' | 'error' | 'human_required'; error?: string }> {
@@ -80,25 +83,37 @@ Sua tarefa é executar a seguinte instrução:
 ${prompt}
 """
 
-Use EXCLUSIVAMENTE o protocolo ACP de ações para interagir com o workspace:
+Use o protocolo ACP de Capabilities e Tools semânticas para operar no workspace:
 
-1. Criar ou sobrescrever arquivo:
+1. Tools Semânticas (Recomendado):
+[TOOL: workspace.read]
+path=caminho/arquivo.txt
+[/TOOL]
+
+[TOOL: workspace.write]
+path=caminho/arquivo.txt
+content=conteudo
+[/TOOL]
+
+[TOOL: git.status][/TOOL]
+[TOOL: git.diff][/TOOL]
+[TOOL: git.log][/TOOL]
+
+[TOOL: npm.test][/TOOL]
+[TOOL: npm.build][/TOOL]
+
+2. Diretivas Legadas (Compatibilidade V1-V4):
 [FILE_CREATE: <caminho_relativo>]
 <conteúdo_do_arquivo>
 [/FILE_CREATE]
 
-2. Ler arquivo existente para inspecionar conteúdo:
 [FILE_READ: <caminho_relativo>][/FILE_READ]
-
-3. Deletar arquivo:
 [FILE_DELETE: <caminho_relativo>][/FILE_DELETE]
-
-4. Executar comando no workspace (ex: testes, validação, verificação):
 [EXEC: <comando>][/EXEC]
 
 Segurança:
-- Todos os caminhos devem ser estritamente relativos ou contidos no workspace "${cwd}".
-- Qualquer tentativa de path traversal (..) será imediatamente bloqueada.
+- Todos os caminhos devem estar estritamente contidos no workspace "${cwd}".
+- Qualquer tentativa de path traversal ou violação de capability será imediatamente bloqueada.
 Ao finalizar, confirme as ações executadas e o resultado.`;
 
     const r: GptPromptResponse = await this.transport.continueSession(sessionId, systemAugmentedPrompt, {
@@ -108,11 +123,31 @@ Ao finalizar, confirme as ações executadas e o resultado.`;
     });
 
     let executionOutput = r.text;
-    const actions = ActionParser.parse(r.text);
-    const batchResult = this.executor.executeBatch(cwd, actions);
 
-    if (batchResult.summary) {
-      executionOutput += `\n\n${batchResult.summary}`;
+    // 1. Check for semantic tool requests and legacy bridge
+    const toolRequests = ToolParser.parse(r.text);
+
+    let batchSummary = '';
+    let executedTelemetry: any[] = [];
+
+    if (toolRequests.length > 0) {
+      const toolBatch = this.toolRegistry.executeBatch(cwd, toolRequests, {
+        runId: options.request_id,
+        turn: 1
+      });
+      batchSummary = toolBatch.summary;
+      executedTelemetry = toolBatch.telemetry;
+    } else {
+      // Fallback to legacy parser if no tool requests parsed
+      const actions = ActionParser.parse(r.text);
+      if (actions.length > 0) {
+        const batchResult = this.executor.executeBatch(cwd, actions);
+        batchSummary = batchResult.summary;
+      }
+    }
+
+    if (batchSummary) {
+      executionOutput += `\n\n${batchSummary}`;
     }
 
     return {
@@ -126,11 +161,7 @@ Ao finalizar, confirme as ações executadas e o resultado.`;
       error: r.error,
       metadata: {
         ...r.metadata,
-        appliedFiles: batchResult.appliedFiles,
-        readFiles: batchResult.readFiles,
-        deletedFiles: batchResult.deletedFiles,
-        executedCommands: batchResult.executedCommands,
-        actionResults: batchResult.results
+        toolTelemetry: executedTelemetry
       }
     };
   }
@@ -141,5 +172,9 @@ Ao finalizar, confirme as ações executadas e o resultado.`;
 
   getActionExecutor(): ActionExecutor {
     return this.executor;
+  }
+
+  getToolRegistry(): ToolRegistry {
+    return this.toolRegistry;
   }
 }
