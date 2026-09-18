@@ -89,7 +89,6 @@ export class ClosedLoopEngine {
     const startedAt = new Date().toISOString();
     const overallStartTime = Date.now();
     const effectiveCwd = options.cwd || options.executionContext?.workspacePath || this.config.cwd;
-    const effectiveConversationId = options.conversationId || options.executionContext?.conversationId;
 
     const turnSummaries: ClosedLoopTurnSummary[] = [];
     let currentExecutorResponse = '';
