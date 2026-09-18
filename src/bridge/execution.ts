@@ -1,7 +1,6 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { GptTransport, IGptTransport, GptPromptResponse } from '../gpt/index.js';
 import { AntigravityBridge, IAntigravityTransport, AntigravityTransport } from '../antigravity/index.js';
+import { ActionParser, ActionExecutor, ActionExecutorOptions } from '../actions/index.js';
 
 export type ExecutionProviderKind = 'antigravity' | 'gpt';
 
@@ -62,9 +61,11 @@ export class AntigravityExecutionTransport implements IExecutionTransport {
 
 export class GptExecutionTransport implements IExecutionTransport {
   private readonly transport: IGptTransport;
+  private readonly executor: ActionExecutor;
 
-  constructor(transport?: IGptTransport) {
+  constructor(transport?: IGptTransport, executorOptions?: ActionExecutorOptions) {
     this.transport = transport || new GptTransport();
+    this.executor = new ActionExecutor(executorOptions);
   }
 
   async health(timeoutMs = 5000): Promise<{ status: 'ok' | 'error' | 'human_required'; error?: string }> {
@@ -79,13 +80,26 @@ Sua tarefa é executar a seguinte instrução:
 ${prompt}
 """
 
-Para criar ou modificar arquivos no workspace, use EXATAMENTE a diretiva de bloco:
-[FILE_CREATE: <nome_relativo_do_arquivo>]
-<conteudo_exato_do_arquivo>
+Use EXCLUSIVAMENTE o protocolo ACP de ações para interagir com o workspace:
+
+1. Criar ou sobrescrever arquivo:
+[FILE_CREATE: <caminho_relativo>]
+<conteúdo_do_arquivo>
 [/FILE_CREATE]
 
-Se a instrução solicitar a criação de um arquivo específico (por exemplo GPT_EXECUTOR_PROOF.txt), emita a diretiva correspondente.
-Ao finalizar, confirme os arquivos criados e o resultado.`;
+2. Ler arquivo existente para inspecionar conteúdo:
+[FILE_READ: <caminho_relativo>][/FILE_READ]
+
+3. Deletar arquivo:
+[FILE_DELETE: <caminho_relativo>][/FILE_DELETE]
+
+4. Executar comando no workspace (ex: testes, validação, verificação):
+[EXEC: <comando>][/EXEC]
+
+Segurança:
+- Todos os caminhos devem ser estritamente relativos ou contidos no workspace "${cwd}".
+- Qualquer tentativa de path traversal (..) será imediatamente bloqueada.
+Ao finalizar, confirme as ações executadas e o resultado.`;
 
     const r: GptPromptResponse = await this.transport.continueSession(sessionId, systemAugmentedPrompt, {
       request_id: options.request_id,
@@ -94,30 +108,11 @@ Ao finalizar, confirme os arquivos criados e o resultado.`;
     });
 
     let executionOutput = r.text;
-    const appliedFiles: string[] = [];
+    const actions = ActionParser.parse(r.text);
+    const batchResult = this.executor.executeBatch(cwd, actions);
 
-    if (r.status === 'COMPLETED' && r.text) {
-      const regex = /\[FILE_(?:CREATE|WRITE):\s*([^\]]+)\]([\s\S]*?)\[\/FILE_(?:CREATE|WRITE)\]/gi;
-      let match;
-      while ((match = regex.exec(r.text)) !== null) {
-        const relativePath = match[1].trim();
-        const content = match[2];
-        const targetPath = path.isAbsolute(relativePath)
-          ? relativePath
-          : path.resolve(cwd, relativePath);
-
-        try {
-          fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-          fs.writeFileSync(targetPath, content, 'utf8');
-          appliedFiles.push(relativePath);
-        } catch (err: any) {
-          executionOutput += `\n[ERRO AO GRAVAR ARQUIVO ${relativePath}: ${err.message}]`;
-        }
-      }
-
-      if (appliedFiles.length > 0) {
-        executionOutput += `\n[EXECUTOR_STATUS: Arquivos gravados com sucesso no workspace: ${appliedFiles.join(', ')}]`;
-      }
+    if (batchResult.summary) {
+      executionOutput += `\n\n${batchResult.summary}`;
     }
 
     return {
@@ -131,12 +126,20 @@ Ao finalizar, confirme os arquivos criados e o resultado.`;
       error: r.error,
       metadata: {
         ...r.metadata,
-        appliedFiles
+        appliedFiles: batchResult.appliedFiles,
+        readFiles: batchResult.readFiles,
+        deletedFiles: batchResult.deletedFiles,
+        executedCommands: batchResult.executedCommands,
+        actionResults: batchResult.results
       }
     };
   }
 
   getTransport(): IGptTransport {
     return this.transport;
+  }
+
+  getActionExecutor(): ActionExecutor {
+    return this.executor;
   }
 }
