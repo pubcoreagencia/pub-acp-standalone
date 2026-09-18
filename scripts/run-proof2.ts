@@ -63,7 +63,7 @@ async function runProof2() {
   const runStore = server.getRunStore();
 
   // 3. Transports Pre-flight Health Check
-  const gptTransport = new GptTransport({ baseUrl: 'http://127.0.0.1:5125', defaultTimeoutMs: 300000 });
+  const gptTransport = new GptTransport({ baseUrl: 'http://127.0.0.1:5126', defaultTimeoutMs: 300000 });
   const agTransport = new AntigravityTransport({ defaultCwd: sandboxDir, defaultTimeoutMs: 300000 });
 
   console.log('\n[PRE-FLIGHT] Checking ACP-LAB health...');

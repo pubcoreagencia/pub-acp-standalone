@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { GptTransport, IGptTransport, GptPromptResponse } from '../gpt/index.js';
 import { AntigravityBridge, IAntigravityTransport, AntigravityTransport } from '../antigravity/index.js';
 
@@ -70,21 +72,67 @@ export class GptExecutionTransport implements IExecutionTransport {
   }
 
   async executeTurn(sessionId: string, prompt: string, options: ExecutionPromptOptions = {}): Promise<ExecutionResult> {
-    const r: GptPromptResponse = await this.transport.continueSession(sessionId, prompt, {
+    const cwd = options.cwd || process.cwd();
+    const systemAugmentedPrompt = `Você é o executor operacional técnico no workspace "${cwd}".
+Sua tarefa é executar a seguinte instrução:
+"""
+${prompt}
+"""
+
+Para criar ou modificar arquivos no workspace, use EXATAMENTE a diretiva de bloco:
+[FILE_CREATE: <nome_relativo_do_arquivo>]
+<conteudo_exato_do_arquivo>
+[/FILE_CREATE]
+
+Se a instrução solicitar a criação de um arquivo específico (por exemplo GPT_EXECUTOR_PROOF.txt), emita a diretiva correspondente.
+Ao finalizar, confirme os arquivos criados e o resultado.`;
+
+    const r: GptPromptResponse = await this.transport.continueSession(sessionId, systemAugmentedPrompt, {
       request_id: options.request_id,
       timeout_ms: options.timeout_ms,
       options: options.options
     });
+
+    let executionOutput = r.text;
+    const appliedFiles: string[] = [];
+
+    if (r.status === 'COMPLETED' && r.text) {
+      const regex = /\[FILE_(?:CREATE|WRITE):\s*([^\]]+)\]([\s\S]*?)\[\/FILE_(?:CREATE|WRITE)\]/gi;
+      let match;
+      while ((match = regex.exec(r.text)) !== null) {
+        const relativePath = match[1].trim();
+        const content = match[2];
+        const targetPath = path.isAbsolute(relativePath)
+          ? relativePath
+          : path.resolve(cwd, relativePath);
+
+        try {
+          fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+          fs.writeFileSync(targetPath, content, 'utf8');
+          appliedFiles.push(relativePath);
+        } catch (err: any) {
+          executionOutput += `\n[ERRO AO GRAVAR ARQUIVO ${relativePath}: ${err.message}]`;
+        }
+      }
+
+      if (appliedFiles.length > 0) {
+        executionOutput += `\n[EXECUTOR_STATUS: Arquivos gravados com sucesso no workspace: ${appliedFiles.join(', ')}]`;
+      }
+    }
+
     return {
       request_id: r.request_id,
       session_id: r.session_id,
       status: r.status === 'HUMAN_REQUIRED' ? 'HUMAN_REQUIRED' :
         r.status === 'TIMEOUT' ? 'TIMEOUT' :
         r.status === 'COMPLETED' ? 'COMPLETED' : 'FAILED',
-      response: r.text,
+      response: executionOutput,
       duration_ms: r.duration_ms,
       error: r.error,
-      metadata: r.metadata
+      metadata: {
+        ...r.metadata,
+        appliedFiles
+      }
     };
   }
 

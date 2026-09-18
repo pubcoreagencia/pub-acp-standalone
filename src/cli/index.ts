@@ -26,7 +26,7 @@ async function main() {
     console.log('  acp catalog remove <projectId> [--catalog <path>]');
     console.log('');
     console.log('Environment:');
-    console.log('  ACP_LAB_URL=http://127.0.0.1:5125 (default)');
+    console.log('  ACP_LAB_URL=http://127.0.0.1:5126 (default)');
     console.log('  PUB_ACP_CATALOG_PATH=<path> (optional catalog path)');
     process.exit(0);
   }
