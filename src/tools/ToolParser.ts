@@ -1,5 +1,10 @@
 import { ToolRequest } from './types.js';
 
+interface IndexedDirective {
+  index: number;
+  request: ToolRequest;
+}
+
 export class ToolParser {
   private static readonly TOOL_REGEX = /\[TOOL:\s*([a-zA-Z0-9_\-]+)\.([a-zA-Z0-9_\-]+)\]([\s\S]*?)\[\/TOOL\]/g;
   private static readonly LEGACY_EXEC_REGEX = /\[EXEC:\s*([\s\S]*?)\]\s*\[\/EXEC\]/g;
@@ -9,8 +14,9 @@ export class ToolParser {
   private static readonly LEGACY_FILE_DELETE_REGEX = /\[FILE_DELETE:\s*([^\n\r\]]+)\]\s*\[\/FILE_DELETE\]/g;
 
   static parse(text: string): ToolRequest[] {
-    const requests: ToolRequest[] = [];
-    if (!text || typeof text !== 'string') return requests;
+    if (!text || typeof text !== 'string') return [];
+
+    const indexedDirectives: IndexedDirective[] = [];
 
     // 1. Semantic [TOOL: tool.operation] ... [/TOOL]
     const toolMatches = [...text.matchAll(ToolParser.TOOL_REGEX)];
@@ -30,7 +36,6 @@ export class ToolParser {
           }
         }
         if (Object.keys(args).length === 0) {
-          // Multiline key-value parsing: if 'content=' is found, everything after 'content=' belongs to content
           const contentIdx = body.indexOf('content=');
           if (contentIdx !== -1) {
             const beforeContent = body.substring(0, contentIdx);
@@ -62,44 +67,55 @@ export class ToolParser {
         }
       }
 
-      requests.push({
-        tool,
-        operation,
-        args,
-        rawDirective: match[0],
-        legacyExec: false
+      indexedDirectives.push({
+        index: match.index ?? 0,
+        request: {
+          tool,
+          operation,
+          args,
+          rawDirective: match[0],
+          legacyExec: false
+        }
       });
     }
 
-    // 2. Legacy Bridge: [EXEC: ...] -> ToolRequest('process', 'exec', { command })
+    // 2. Legacy Bridge: [EXEC: ...] -> ToolRequest
     const execMatches = [...text.matchAll(ToolParser.LEGACY_EXEC_REGEX)];
     for (const match of execMatches) {
       const cmd = match[1].trim();
       if (cmd) {
-        // Semantic bridge heuristics: map obvious git/npm commands to semantic tools when possible
         if (cmd.startsWith('git status')) {
-          requests.push({
-            tool: 'git',
-            operation: 'status',
-            args: {},
-            rawDirective: match[0],
-            legacyExec: true
+          indexedDirectives.push({
+            index: match.index ?? 0,
+            request: {
+              tool: 'git',
+              operation: 'status',
+              args: {},
+              rawDirective: match[0],
+              legacyExec: true
+            }
           });
         } else if (cmd.startsWith('npm test')) {
-          requests.push({
-            tool: 'npm',
-            operation: 'test',
-            args: {},
-            rawDirective: match[0],
-            legacyExec: true
+          indexedDirectives.push({
+            index: match.index ?? 0,
+            request: {
+              tool: 'npm',
+              operation: 'test',
+              args: {},
+              rawDirective: match[0],
+              legacyExec: true
+            }
           });
         } else {
-          requests.push({
-            tool: 'process',
-            operation: 'exec',
-            args: { command: cmd },
-            rawDirective: match[0],
-            legacyExec: true
+          indexedDirectives.push({
+            index: match.index ?? 0,
+            request: {
+              tool: 'process',
+              operation: 'exec',
+              args: { command: cmd },
+              rawDirective: match[0],
+              legacyExec: true
+            }
           });
         }
       }
@@ -108,48 +124,63 @@ export class ToolParser {
     // 3. Legacy Bridge: [FILE_CREATE], [FILE_WRITE], [FILE_READ], [FILE_DELETE] -> WorkspaceTool
     const createMatches = [...text.matchAll(ToolParser.LEGACY_FILE_CREATE_REGEX)];
     for (const match of createMatches) {
-      requests.push({
-        tool: 'workspace',
-        operation: 'create',
-        args: { path: match[1].trim(), content: match[2] },
-        rawDirective: match[0],
-        legacyExec: false
+      indexedDirectives.push({
+        index: match.index ?? 0,
+        request: {
+          tool: 'workspace',
+          operation: 'create',
+          args: { path: match[1].trim(), content: match[2] },
+          rawDirective: match[0],
+          legacyExec: false
+        }
       });
     }
 
     const writeMatches = [...text.matchAll(ToolParser.LEGACY_FILE_WRITE_REGEX)];
     for (const match of writeMatches) {
-      requests.push({
-        tool: 'workspace',
-        operation: 'write',
-        args: { path: match[1].trim(), content: match[2] },
-        rawDirective: match[0],
-        legacyExec: false
+      indexedDirectives.push({
+        index: match.index ?? 0,
+        request: {
+          tool: 'workspace',
+          operation: 'write',
+          args: { path: match[1].trim(), content: match[2] },
+          rawDirective: match[0],
+          legacyExec: false
+        }
       });
     }
 
     const readMatches = [...text.matchAll(ToolParser.LEGACY_FILE_READ_REGEX)];
     for (const match of readMatches) {
-      requests.push({
-        tool: 'workspace',
-        operation: 'read',
-        args: { path: match[1].trim() },
-        rawDirective: match[0],
-        legacyExec: false
+      indexedDirectives.push({
+        index: match.index ?? 0,
+        request: {
+          tool: 'workspace',
+          operation: 'read',
+          args: { path: match[1].trim() },
+          rawDirective: match[0],
+          legacyExec: false
+        }
       });
     }
 
     const delMatches = [...text.matchAll(ToolParser.LEGACY_FILE_DELETE_REGEX)];
     for (const match of delMatches) {
-      requests.push({
-        tool: 'workspace',
-        operation: 'delete',
-        args: { path: match[1].trim() },
-        rawDirective: match[0],
-        legacyExec: false
+      indexedDirectives.push({
+        index: match.index ?? 0,
+        request: {
+          tool: 'workspace',
+          operation: 'delete',
+          args: { path: match[1].trim() },
+          rawDirective: match[0],
+          legacyExec: false
+        }
       });
     }
 
-    return requests;
+    // Stable sort strictly according to occurrence position in text
+    indexedDirectives.sort((a, b) => a.index - b.index);
+
+    return indexedDirectives.map(d => d.request);
   }
 }

@@ -8,6 +8,12 @@ export class NpmTool implements IToolAdapter {
   readonly name: ToolCategory = 'npm';
   readonly supportedOperations = ['test', 'build', 'run'];
 
+  // Explicit allowlist of permissible npm run targets to prevent arbitrary shell disguise
+  private static readonly DANGEROUS_SCRIPT_PATTERNS = [
+    /(\brm\s+-rf\b|\bdd\b|\bmkfs\b|\bformat\b)/i,
+    /(\bcurl\b|\bwget\b|\bnc\b|\bsh\b|\bbash\b)\s+.*\|/i
+  ];
+
   getRequiredCapability(operation: string, _args: Record<string, unknown>): ExecutionCapability {
     switch (operation) {
       case 'test':
@@ -20,20 +26,36 @@ export class NpmTool implements IToolAdapter {
     }
   }
 
-  private validateScript(workspaceRoot: string, scriptName: string): { ok: boolean; error?: string } {
+  private validateScript(
+    workspaceRoot: string,
+    scriptName: string
+  ): { ok: boolean; scriptContent?: string; error?: string } {
     const pkgPath = path.join(workspaceRoot, 'package.json');
     if (!fs.existsSync(pkgPath)) {
       return { ok: false, error: 'package.json not found in workspace' };
     }
     try {
       const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-      if (!pkg.scripts || !pkg.scripts[scriptName]) {
+      if (!pkg.scripts || typeof pkg.scripts[scriptName] !== 'string') {
         return {
           ok: false,
           error: `Script "${scriptName}" does not exist in package.json scripts [${Object.keys(pkg.scripts || {}).join(', ')}]`
         };
       }
-      return { ok: true };
+
+      const scriptContent = pkg.scripts[scriptName].trim();
+
+      // Guardrail against catastrophic script payloads
+      for (const pat of NpmTool.DANGEROUS_SCRIPT_PATTERNS) {
+        if (pat.test(scriptContent)) {
+          return {
+            ok: false,
+            error: `Script "${scriptName}" contained potentially dangerous pattern in package.json: "${scriptContent}"`
+          };
+        }
+      }
+
+      return { ok: true, scriptContent };
     } catch (err: any) {
       return { ok: false, error: `Failed to parse package.json: ${err.message}` };
     }
@@ -84,6 +106,8 @@ export class NpmTool implements IToolAdapter {
       }
     }
 
+    const scriptInfo = this.validateScript(workspaceRoot, scriptToRun);
+
     const argv = ['run', scriptToRun];
     if (Array.isArray(args.args)) {
       argv.push('--', ...args.args.map(String));
@@ -105,7 +129,12 @@ export class NpmTool implements IToolAdapter {
         exitCode: 0,
         stdout: stdout.trim(),
         output: stdout.trim(),
-        durationMs: Date.now() - start
+        durationMs: Date.now() - start,
+        metadata: {
+          scriptName: scriptToRun,
+          scriptContent: scriptInfo.scriptContent,
+          npmInternalShellWarning: 'npm runs package.json scripts via subshell internally'
+        }
       };
     } catch (err: any) {
       return {
@@ -116,7 +145,11 @@ export class NpmTool implements IToolAdapter {
         exitCode: typeof err.status === 'number' ? err.status : 1,
         stderr: err.stderr ? String(err.stderr).trim() : err.message,
         stdout: err.stdout ? String(err.stdout).trim() : '',
-        durationMs: Date.now() - start
+        durationMs: Date.now() - start,
+        metadata: {
+          scriptName: scriptToRun,
+          scriptContent: scriptInfo.scriptContent
+        }
       };
     }
   }

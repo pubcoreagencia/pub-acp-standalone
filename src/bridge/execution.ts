@@ -12,6 +12,8 @@ export interface ExecutionPromptOptions {
   cwd?: string;
   effort?: 'low' | 'medium' | 'high';
   model?: string;
+  turn?: number;
+  run_id?: string;
   options?: Record<string, unknown>;
 }
 
@@ -77,6 +79,9 @@ export class GptExecutionTransport implements IExecutionTransport {
 
   async executeTurn(sessionId: string, prompt: string, options: ExecutionPromptOptions = {}): Promise<ExecutionResult> {
     const cwd = options.cwd || process.cwd();
+    const currentTurn = options.turn ?? (options.options?.turn as number | undefined) ?? 1;
+    const currentRunId = options.run_id || (options.options?.run_id as string | undefined) || options.request_id;
+
     const systemAugmentedPrompt = `Você é o executor operacional técnico no workspace "${cwd}".
 Sua tarefa é executar a seguinte instrução:
 """
@@ -124,7 +129,7 @@ Ao finalizar, confirme as ações executadas e o resultado.`;
 
     let executionOutput = r.text;
 
-    // 1. Check for semantic tool requests and legacy bridge
+    // 1. Parse directives maintaining strict global occurrence order
     const toolRequests = ToolParser.parse(r.text);
 
     let batchSummary = '';
@@ -132,8 +137,9 @@ Ao finalizar, confirme as ações executadas e o resultado.`;
 
     if (toolRequests.length > 0) {
       const toolBatch = this.toolRegistry.executeBatch(cwd, toolRequests, {
-        runId: options.request_id,
-        turn: 1
+        runId: currentRunId,
+        turn: currentTurn,
+        provider: 'gpt'
       });
       batchSummary = toolBatch.summary;
       executedTelemetry = toolBatch.telemetry;

@@ -29,40 +29,45 @@ export class ToolRegistry {
     return this.adapters.get(toolName.toLowerCase());
   }
 
+  /**
+   * Fail-Closed Capability Authorization:
+   * - capability explicitly true  -> ALLOW
+   * - capability explicitly false -> BLOCK
+   * - capability absent           -> BLOCK (NO permissive default fallbacks)
+   */
   hasCapability(capability: ExecutionCapability): boolean {
-    // Fail-Closed: check capability policy
     if (this.policy.capabilities && this.policy.capabilities[capability] !== undefined) {
       return this.policy.capabilities[capability] === true;
     }
 
-    // Default policy fallbacks
+    // Strict Fail-Closed: if capabilities map is defined, any absent capability is DENIED
+    if (this.policy.capabilities) {
+      return false;
+    }
+
+    // Legacy ActionPolicy booleans support (only if capabilities dictionary wasn't supplied)
     switch (capability) {
       case 'workspace.read':
-        return this.policy.allowFileRead ?? true;
-      case 'workspace.write':
-        return (this.policy.allowFileCreate || this.policy.allowFileWrite) ?? true;
-      case 'workspace.delete':
-        return this.policy.allowFileDelete ?? true;
       case 'workspace.list':
-        return this.policy.allowFileRead ?? true;
-      case 'git.read':
-        return true; // Read-only git operations default ALLOW
-      case 'git.mutate':
-        return false; // Mutating git operations require explicit grant
-      case 'npm.test':
-      case 'npm.build':
-      case 'npm.run':
-        return true;
+        return this.policy.allowFileRead === true;
+      case 'workspace.write':
+        return (this.policy.allowFileCreate === true || this.policy.allowFileWrite === true);
+      case 'workspace.delete':
+        return this.policy.allowFileDelete === true;
       case 'node.exec':
-        return this.policy.allowExec ?? true;
       case 'process.exec':
-        return this.policy.allowExec ?? true;
+        return this.policy.allowExec === true;
       default:
+        // Everything else (git.mutate, git.read, npm.*) fails closed unless explicitly granted
         return false;
     }
   }
 
-  executeRequest(workspaceRoot: string, request: ToolRequest, telemetryContext: { runId?: string; turn?: number } = {}): { result: ToolResult; telemetry: ToolExecutionTelemetry } {
+  executeRequest(
+    workspaceRoot: string,
+    request: ToolRequest,
+    telemetryContext: { runId?: string; turn?: number; provider?: string } = {}
+  ): { result: ToolResult; telemetry: ToolExecutionTelemetry } {
     const start = Date.now();
     const adapter = this.getAdapter(request.tool);
 
@@ -78,8 +83,9 @@ export class ToolRegistry {
         durationMs
       };
       const telem: ToolExecutionTelemetry = {
-        ...telemetryContext,
-        provider: 'acp-v5-tool-runtime',
+        runId: telemetryContext.runId,
+        turn: telemetryContext.turn,
+        provider: telemetryContext.provider || 'gpt',
         tool: request.tool,
         operation: request.operation,
         capability: 'process.exec',
@@ -90,6 +96,37 @@ export class ToolRegistry {
         result: 'BLOCKED',
         durationMs,
         blockedReason: 'TOOL_NOT_FOUND',
+        legacyExec: request.legacyExec
+      };
+      return { result: res, telemetry: telem };
+    }
+
+    // Check if operation is supported by the tool adapter
+    if (!adapter.supportedOperations.includes(request.operation)) {
+      const durationMs = Date.now() - start;
+      const res: ToolResult = {
+        tool: request.tool,
+        operation: request.operation,
+        capability: 'process.exec',
+        status: 'BLOCKED',
+        blockedReason: 'UNKNOWN_OPERATION',
+        stderr: `Operation "${request.operation}" is not supported by tool "${adapter.name}". Supported: [${adapter.supportedOperations.join(', ')}]`,
+        durationMs
+      };
+      const telem: ToolExecutionTelemetry = {
+        runId: telemetryContext.runId,
+        turn: telemetryContext.turn,
+        provider: telemetryContext.provider || 'gpt',
+        tool: request.tool,
+        operation: request.operation,
+        capability: 'process.exec',
+        args: request.args,
+        workspace: workspaceRoot,
+        policyDecision: 'BLOCK',
+        executionProvider: adapter.name,
+        result: 'BLOCKED',
+        durationMs,
+        blockedReason: 'UNKNOWN_OPERATION',
         legacyExec: request.legacyExec
       };
       return { result: res, telemetry: telem };
@@ -110,8 +147,9 @@ export class ToolRegistry {
         durationMs
       };
       const telem: ToolExecutionTelemetry = {
-        ...telemetryContext,
-        provider: 'acp-v5-tool-runtime',
+        runId: telemetryContext.runId,
+        turn: telemetryContext.turn,
+        provider: telemetryContext.provider || 'gpt',
         tool: request.tool,
         operation: request.operation,
         capability: requiredCapability,
@@ -131,8 +169,9 @@ export class ToolRegistry {
       const toolRes = adapter.execute(workspaceRoot, request.operation, request.args);
       const durationMs = Date.now() - start;
       const telem: ToolExecutionTelemetry = {
-        ...telemetryContext,
-        provider: 'acp-v5-tool-runtime',
+        runId: telemetryContext.runId,
+        turn: telemetryContext.turn,
+        provider: telemetryContext.provider || 'gpt',
         tool: request.tool,
         operation: request.operation,
         capability: requiredCapability,
@@ -158,8 +197,9 @@ export class ToolRegistry {
         durationMs
       };
       const telem: ToolExecutionTelemetry = {
-        ...telemetryContext,
-        provider: 'acp-v5-tool-runtime',
+        runId: telemetryContext.runId,
+        turn: telemetryContext.turn,
+        provider: telemetryContext.provider || 'gpt',
         tool: request.tool,
         operation: request.operation,
         capability: requiredCapability,
@@ -175,7 +215,11 @@ export class ToolRegistry {
     }
   }
 
-  executeBatch(workspaceRoot: string, requests: ToolRequest[], telemetryContext: { runId?: string; turn?: number } = {}): ToolBatchResult {
+  executeBatch(
+    workspaceRoot: string,
+    requests: ToolRequest[],
+    telemetryContext: { runId?: string; turn?: number; provider?: string } = {}
+  ): ToolBatchResult {
     const results: ToolResult[] = [];
     const telemetries: ToolExecutionTelemetry[] = [];
     const summaryLines: string[] = [];

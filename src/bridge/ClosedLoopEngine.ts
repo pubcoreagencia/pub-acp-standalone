@@ -210,7 +210,7 @@ export class ClosedLoopEngine {
 
       const executorResult = await this.executor.executeTurn(executorSessionId, instructionForExecutor, {
         request_id: executorRequestId,
-        cwd: effectiveCwd,
+        cwd: effectiveCwd, turn, run_id: loopId,
         effort: this.config.effort,
         model: this.config.model,
         timeout_ms: this.config.executorTimeoutMs
