@@ -90,6 +90,8 @@ export { ExecutionContext } from '../multiproject/types.js';
 import { ExecutionContext } from '../multiproject/types.js';
 
 export interface ClosedLoopConfig {
+  executorProvider?: 'antigravity' | 'gpt';
+  executorTimeoutMs?: number;
   defaultTimeoutMs?: number;
   cwd?: string;
   effort?: 'low' | 'medium' | 'high';
