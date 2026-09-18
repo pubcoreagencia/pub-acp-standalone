@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 async function main() {
-  console.log('--- STARTING PROOF: Browser Operator V0 E2E Proof ---');
+  console.log('--- STARTING PROOF: Browser Operator V0 E2E Proof (Shared Telemetry) ---');
 
   const workspacePath = '/Users/user/Documents/pubcore/sagaz-farm-os';
 
@@ -72,10 +72,10 @@ async function main() {
   });
 
   // 5. Test GPT Direct run issuing browser commands
-  console.log('\n5. Testing GPT Direct Run with Browser Operator capabilities');
+  console.log('\n5. Testing GPT Direct Run with explicit browser tool commands');
   const startReq = {
     projectId: 'sagaz-farm-os',
-    instruction: 'Inspecione a estação operacional usando o comando [TOOL: browser.status][/TOOL] e confirme o status.',
+    instruction: `Inspecione a estação Browser usando o comando [TOOL: browser.navigate]url=${url}/[/TOOL] e em seguida leia a página com [TOOL: browser.read][/TOOL] e tire um screenshot com [TOOL: browser.screenshot][/TOOL].`,
     executorMode: 'gpt-direct',
     maxTurns: 1
   };
@@ -90,8 +90,7 @@ async function main() {
   console.log('Initiated GPT Direct Run:', runId);
 
   let finalRun: any = null;
-  // Poll up to 180 seconds to allow full two-hop turn (GPT thinking + direct tool execution + loop resolution)
-  for (let i = 0; i < 180; i++) {
+  for (let i = 0; i < 240; i++) {
     await new Promise(r => setTimeout(r, 1000));
     finalRun = controlPlane.runStore.getRun(runId);
     console.log(`Poll [${i+1}s] state: ${finalRun?.status}, turns: ${finalRun?.gptTurns}`);
@@ -104,6 +103,9 @@ async function main() {
   console.log('Final Status:', finalRun?.status);
   console.log('Executor Mode:', finalRun?.executorMode);
   console.log('Provider:', finalRun?.provider);
+  console.log('Browser Navigations:', finalRun?.browserNavigations);
+  console.log('Browser Reads:', finalRun?.browserReads);
+  console.log('Browser Screenshots:', finalRun?.browserScreenshots);
   console.log('Events:');
   finalRun?.events?.forEach((e: any) => console.log(`  - [${e.type}] ${e.summary}`));
 
@@ -134,6 +136,12 @@ async function main() {
       provider: finalRun?.provider,
       totalEvents: finalRun?.events?.length || 0,
       eventTypes: finalRun?.events?.map((e: any) => e.type) || [],
+      browserMetrics: {
+        browserNavigations: finalRun?.browserNavigations || 0,
+        browserReads: finalRun?.browserReads || 0,
+        browserScreenshots: finalRun?.browserScreenshots || 0,
+        agExecutions: finalRun?.agExecutions || 0
+      },
       hasAgEvents,
       durationMs: finalRun?.durationMs
     }

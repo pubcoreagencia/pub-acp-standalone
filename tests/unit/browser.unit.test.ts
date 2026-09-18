@@ -147,3 +147,86 @@ test('ToolRegistry - Browser capabilities authorization fail-closed enforcement'
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+
+test('Browser Wiring - Dependency injection: ToolRegistry and BrowserTool share injected BrowserOperator and propagate events to EventBus', async () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-browser-wiring-'));
+  const publishedEvents: any[] = [];
+  const mockEventBus = {
+    publish(evt: any) {
+      publishedEvents.push(evt);
+    },
+    subscribe() { return () => {}; },
+    unsubscribe() {},
+    getHistory() { return []; },
+    clear() {}
+  };
+
+  const sharedOperator = new BrowserOperator({
+    eventBus: mockEventBus as any,
+    allowedDomains: ['127.0.0.1', 'localhost', 'example.com']
+  });
+
+  const registry = new ToolRegistry({
+    capabilities: {
+      'browser.status': true,
+      'browser.navigate': true,
+      'browser.read': true,
+      'browser.screenshot': true
+    }
+  }, sharedOperator);
+
+  try {
+    // A. ToolRegistry uses injected BrowserOperator
+    const browserAdapter = registry.getAdapter('browser') as BrowserTool;
+    assert.ok(browserAdapter);
+    // B. BrowserTool uses same operator
+    assert.strictEqual(browserAdapter.getOperator(), sharedOperator);
+
+    // C. When browser.navigate is executed: BROWSER_NAVIGATION_STARTED (and finished/error)
+    await registry.executeRequest(tmpRoot, {
+      tool: 'browser',
+      operation: 'navigate',
+      args: { url: 'http://127.0.0.1:9222/' }
+    }, { runId: 'run-test-browser', turn: 1, provider: 'gpt' });
+
+    const navStarted = publishedEvents.find(e => e.type === 'BROWSER_NAVIGATION_STARTED');
+    assert.ok(navStarted, 'BROWSER_NAVIGATION_STARTED must be published');
+    assert.equal(navStarted.runId, 'run-test-browser');
+
+    // D. browser.read emits BROWSER_READ or BROWSER_ERROR on failure
+    await registry.executeRequest(tmpRoot, {
+      tool: 'browser',
+      operation: 'read',
+      args: {}
+    }, { runId: 'run-test-browser', turn: 1, provider: 'gpt' });
+
+    const readEvt = publishedEvents.find(e => e.type === 'BROWSER_READ' || e.type === 'BROWSER_ERROR');
+    assert.ok(readEvt, 'BROWSER_READ or BROWSER_ERROR must be published');
+
+    // E. browser.screenshot emits BROWSER_SCREENSHOT or BROWSER_ERROR on failure
+    await registry.executeRequest(tmpRoot, {
+      tool: 'browser',
+      operation: 'screenshot',
+      args: {}
+    }, { runId: 'run-test-browser', turn: 1, provider: 'gpt' });
+
+    const shotEvt = publishedEvents.find(e => e.type === 'BROWSER_SCREENSHOT' || e.type === 'BROWSER_ERROR');
+    assert.ok(shotEvt, 'BROWSER_SCREENSHOT or BROWSER_ERROR must be published');
+
+    // F. Capability negada ou domínio bloqueado -> BROWSER_BLOCKED
+    await registry.executeRequest(tmpRoot, {
+      tool: 'browser',
+      operation: 'navigate',
+      args: { url: 'https://disallowed-domain.org' }
+    }, { runId: 'run-test-browser', turn: 1, provider: 'gpt' });
+
+    const blockedEvt = publishedEvents.find(e => e.type === 'BROWSER_BLOCKED');
+    assert.ok(blockedEvt, 'BROWSER_BLOCKED must be published');
+
+    // G. Nenhuma ocorrência de eventos AG_*
+    const agEvt = publishedEvents.find(e => e.type.startsWith('AG_'));
+    assert.strictEqual(agEvt, undefined, 'Zero AG_* events must be published');
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});

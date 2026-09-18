@@ -2,6 +2,7 @@ import { GptTransport, IGptTransport, GptPromptResponse } from '../gpt/index.js'
 import { AntigravityBridge, IAntigravityTransport, AntigravityTransport } from '../antigravity/index.js';
 import { ActionParser, ActionExecutor, ActionExecutorOptions, ActionPolicy } from '../actions/index.js';
 import { ToolParser, ToolRegistry } from '../tools/index.js';
+import { BrowserOperator } from '../browser/BrowserOperator.js';
 
 export type ExecutionProviderKind = 'antigravity' | 'gpt';
 
@@ -72,10 +73,14 @@ export class GptExecutionTransport implements IExecutionTransport {
   private readonly executor: ActionExecutor;
   private readonly toolRegistry: ToolRegistry;
 
-  constructor(transport?: IGptTransport, executorOptions?: ActionExecutorOptions) {
+  constructor(
+    transport?: IGptTransport,
+    executorOptions?: ActionExecutorOptions,
+    browserOperator?: BrowserOperator
+  ) {
     this.transport = transport || new GptTransport();
     this.executor = new ActionExecutor(executorOptions);
-    this.toolRegistry = new ToolRegistry(executorOptions?.policy);
+    this.toolRegistry = new ToolRegistry(executorOptions?.policy, browserOperator);
   }
 
   async health(timeoutMs = 5000): Promise<{ status: 'ok' | 'error' | 'human_required'; error?: string }> {

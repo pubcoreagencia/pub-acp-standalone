@@ -5,6 +5,7 @@ import { NpmTool } from './NpmTool.js';
 import { NodeTool } from './NodeTool.js';
 import { ProcessTool } from './ProcessTool.js';
 import { BrowserTool } from './BrowserTool.js';
+import { BrowserOperator } from '../browser/BrowserOperator.js';
 import { ActionPolicy, ExecutionCapability } from '../actions/types.js';
 import { AuthorizationEngine } from './AuthorizationEngine.js';
 
@@ -13,7 +14,7 @@ export class ToolRegistry {
   private readonly policy: ActionPolicy;
   private readonly authEngine: AuthorizationEngine;
 
-  constructor(policy: ActionPolicy = {}) {
+  constructor(policy: ActionPolicy = {}, browserOperator?: BrowserOperator) {
     this.policy = policy;
     this.authEngine = new AuthorizationEngine(policy);
 
@@ -23,7 +24,7 @@ export class ToolRegistry {
     this.register(new NpmTool());
     this.register(new NodeTool());
     this.register(new ProcessTool());
-    this.register(new BrowserTool());
+    this.register(new BrowserTool(browserOperator));
   }
 
   register(adapter: IToolAdapter): void {

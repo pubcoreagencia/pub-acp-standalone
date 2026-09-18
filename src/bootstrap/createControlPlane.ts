@@ -16,6 +16,7 @@ import { ExecutionContext, ProjectDefinition } from '../multiproject/types.js';
 import { ProjectCatalogLoader } from '../catalog/ProjectCatalogLoader.js';
 import { IProjectCatalog } from '../catalog/types.js';
 import { FileProjectCatalog } from '../catalog/FileProjectCatalog.js';
+import { BrowserOperator } from '../browser/BrowserOperator.js';
 
 export interface ControlPlaneOptions {
   cwd?: string;
@@ -30,6 +31,7 @@ export interface ControlPlaneOptions {
   resolver?: WorkspaceResolver;
   safetyGate?: SafetyGate;
   engineFactory?: (context: ExecutionContext) => ClosedLoopEngine;
+  browserOperator?: BrowserOperator;
 }
 
 export interface ControlPlane {
@@ -44,6 +46,7 @@ export interface ControlPlane {
   safetyGate: SafetyGate;
   dispatcher: IProjectDispatcher;
   currentProject?: ProjectDefinition;
+  browserOperator: BrowserOperator;
 }
 
 /**
@@ -61,6 +64,7 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
   const sessionStore = options.sessionStore || new AntigravitySessionStore();
   const workspaceLock = options.workspaceLock || new MemoryWorkspaceLock();
   const contextStore = options.contextStore || new MemoryProjectContextStore();
+  const browserOperator = options.browserOperator || new BrowserOperator({ eventBus });
 
   // 2. Multiproject Registry
   const projectRegistry = options.projectRegistry || new ProjectRegistry();
@@ -110,7 +114,7 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
     }
   }
 
-  // 5. Canonical Engine Factory (connecting ClosedLoopEngine with shared EventBus)
+  // 5. Canonical Engine Factory (connecting ClosedLoopEngine with shared EventBus and BrowserOperator)
   const engineFactory = options.engineFactory || ((context: ExecutionContext) => {
     const isDirect = (context.executorMode || 'gpt-direct') === 'gpt-direct';
     const launcherPath = path.resolve(process.cwd(), 'bin', 'mac_sandbox_launcher');
@@ -143,7 +147,8 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
         disallowExternalPathArgs: true,
         execTimeoutMs: 60000
       },
-      eventBus
+      eventBus,
+      browserOperator
     });
   });
 
@@ -170,6 +175,7 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
     resolver,
     safetyGate,
     dispatcher,
-    currentProject
+    currentProject,
+    browserOperator
   };
 }

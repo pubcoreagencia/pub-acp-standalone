@@ -1,8 +1,8 @@
 {
-  "proofTimestamp": "2026-09-18T18:02:07.760Z",
+  "proofTimestamp": "2026-09-18T18:49:34.703Z",
   "project": "sagaz-farm-os",
   "workspacePath": "/Users/user/Documents/pubcore/sagaz-farm-os",
-  "serverUrl": "http://127.0.0.1:52031",
+  "serverUrl": "http://127.0.0.1:53079",
   "browserStatus": {
     "status": "CONNECTED",
     "cdpEndpoint": "http://127.0.0.1:9222",
@@ -12,13 +12,13 @@
   },
   "browserNavigation": {
     "status": "SUCCESS",
-    "url": "http://127.0.0.1:52031/",
+    "url": "http://127.0.0.1:53079/",
     "domain": "127.0.0.1",
     "title": "PUB ACP CONTROL ROOM",
-    "durationMs": 1469
+    "durationMs": 1486
   },
   "browserPage": {
-    "url": "http://127.0.0.1:52031/",
+    "url": "http://127.0.0.1:53079/",
     "domain": "127.0.0.1",
     "title": "PUB ACP CONTROL ROOM",
     "textSnippet": "⚡ PUB CONTROL ROOM Sala de Comando da Execução de Engenharia GPT DIRECT ▶ SIMULAR DEMO CONECTADO DEMO MODE NOVA EXECUÇÃO PROJETO Selecione um projeto.",
@@ -26,25 +26,25 @@
   },
   "browserScreenshot": {
     "status": "SUCCESS",
-    "path": "/Users/user/Documents/pub-acp-standalone/.acp/screenshots/shot-1789754384447-342cdd3b.png",
-    "filename": "shot-1789754384447-342cdd3b.png",
-    "bytes": 199816,
-    "url": "http://127.0.0.1:52031/",
+    "path": "/Users/user/Documents/pub-acp-standalone/.acp/screenshots/shot-1789757134360-84a31d90.png",
+    "filename": "shot-1789757134360-84a31d90.png",
+    "bytes": 200128,
+    "url": "http://127.0.0.1:53079/",
     "domain": "127.0.0.1",
-    "durationMs": 150
+    "durationMs": 228
   },
   "gptDirectRun": {
-    "runId": "run-15612072-4239-4a86-aeb3-c313c5d70083",
+    "runId": "run-13001e68-5b36-4300-87a2-adf988bfd084",
     "initialRequest": {
       "projectId": "sagaz-farm-os",
-      "instruction": "Inspecione a estação operacional usando o comando [TOOL: browser.status][/TOOL] e confirme o status.",
+      "instruction": "Inspecione a estação Browser usando o comando [TOOL: browser.navigate]url=http://127.0.0.1:53079/[/TOOL] e em seguida leia a página com [TOOL: browser.read][/TOOL] e tire um screenshot com [TOOL: browser.screenshot][/TOOL].",
       "executorMode": "gpt-direct",
       "maxTurns": 1
     },
-    "finalRunStatus": "COMPLETED",
+    "finalRunStatus": "TOOL_RUNNING",
     "executorMode": "gpt-direct",
     "provider": "gpt",
-    "totalEvents": 16,
+    "totalEvents": 12,
     "eventTypes": [
       "RUN_CREATED",
       "EXECUTOR_SELECTED",
@@ -57,13 +57,15 @@
       "WORKSPACE_LOCK_ACQUIRED",
       "RUN_STARTED",
       "GPT_DECISION",
-      "TOOL_STARTED",
-      "SANDBOX_EXECUTION",
-      "TOOL_FINISHED",
-      "RUN_COMPLETED",
-      "WORKSPACE_LOCK_RELEASED"
+      "TOOL_STARTED"
     ],
+    "browserMetrics": {
+      "browserNavigations": 0,
+      "browserReads": 0,
+      "browserScreenshots": 0,
+      "agExecutions": 0
+    },
     "hasAgEvents": false,
-    "durationMs": 142760
+    "durationMs": 157008
   }
 }

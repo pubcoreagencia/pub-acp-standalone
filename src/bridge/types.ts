@@ -91,6 +91,7 @@ export interface ClosedLoopRunReport {
 import { IEventBus } from '../observability/EventBus.js';
 export { ExecutionContext } from '../multiproject/types.js';
 import { ExecutionContext } from '../multiproject/types.js';
+import { BrowserOperator } from '../browser/BrowserOperator.js';
 
 export interface ClosedLoopConfig {
   executorProvider?: 'antigravity' | 'gpt';
@@ -103,4 +104,5 @@ export interface ClosedLoopConfig {
   projectName?: string;
   executionContext?: ExecutionContext;
   actionPolicy?: ActionPolicy;
+  browserOperator?: BrowserOperator;
 }

@@ -36,7 +36,7 @@ export class ClosedLoopEngine {
     this.executorProvider = config.executorProvider || 'antigravity';
     this.executor = executorTransport ||
       (this.executorProvider === 'gpt'
-        ? new GptExecutionTransport(undefined, { policy: config.actionPolicy })
+        ? new GptExecutionTransport(undefined, { policy: config.actionPolicy }, config.browserOperator)
         : new AntigravityExecutionTransport(this.agBridge));
 
     this.config = {
@@ -49,7 +49,8 @@ export class ClosedLoopEngine {
       eventBus: config.eventBus,
       projectName: config.projectName,
       executionContext: config.executionContext,
-      actionPolicy: config.actionPolicy
+      actionPolicy: config.actionPolicy,
+      browserOperator: config.browserOperator
     };
   }
 

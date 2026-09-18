@@ -45,7 +45,7 @@ export class BrowserTool implements IToolAdapter {
 
     switch (operation) {
       case 'status': {
-        const statusRes = await this.operator.getStatus();
+        const statusRes = await this.operator.getStatus(telemetryCtx);
         return {
           tool: this.name,
           operation,

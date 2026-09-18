@@ -128,9 +128,18 @@ export class BrowserOperator {
       return { ok: false, error: 'Data URLs are not permitted', blockedReason: 'DATA_URL_BLOCKED' };
     }
 
+    let cleaned = trimmed;
+    // Strip surrounding brackets often added by markdown or LLMs, e.g. [http://...], <http://...>, "http://..."
+    if ((cleaned.startsWith('[') && cleaned.endsWith(']')) ||
+        (cleaned.startsWith('<') && cleaned.endsWith('>')) ||
+        (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+        (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+      cleaned = cleaned.slice(1, -1).trim();
+    }
+
     let parsed: URL;
     try {
-      parsed = new URL(trimmed);
+      parsed = new URL(cleaned);
     } catch {
       return { ok: false, error: `Invalid URL format: "${trimmed}"`, blockedReason: 'INVALID_URL' };
     }
@@ -163,12 +172,14 @@ export class BrowserOperator {
   /**
    * 1. browser.status
    */
-  async getStatus(): Promise<BrowserStatusResult> {
+  async getStatus(
+    context: { runId?: string; turn?: number; provider?: string } = {}
+  ): Promise<BrowserStatusResult> {
     try {
       const res = await fetch(`${this.cdpEndpoint}/json/version`, { signal: AbortSignal.timeout(2000) });
       if (res.ok) {
         const data: any = await res.json();
-        return {
+        const statusResult: BrowserStatusResult = {
           status: 'CONNECTED',
           cdpEndpoint: this.cdpEndpoint,
           profileDir: this.profileDir,
@@ -176,6 +187,26 @@ export class BrowserOperator {
           protocolVersion: data['Protocol-Version'],
           connected: true
         };
+
+        if (context.runId) {
+          this.emitEvent({
+            id: `evt-${randomUUID()}`,
+            runId: context.runId,
+            turn: context.turn,
+            timestamp: new Date().toISOString(),
+            type: 'BROWSER_CONNECTED',
+            summary: `Connected to browser: ${statusResult.browser}`,
+            details: {
+              browser: statusResult.browser,
+              cdpEndpoint: this.cdpEndpoint,
+              profileDir: this.profileDir,
+              capability: 'browser.status',
+              provider: context.provider || 'gpt'
+            }
+          });
+        }
+
+        return statusResult;
       }
     } catch {
       // Disconnected
@@ -229,7 +260,7 @@ export class BrowserOperator {
     wsUrl: string,
     method: string,
     params: Record<string, unknown> = {},
-    timeoutMs = 15000
+    timeoutMs = 8000
   ): Promise<any> {
     return new Promise((resolve, reject) => {
       let ws: WebSocket;
@@ -239,20 +270,33 @@ export class BrowserOperator {
         return reject(err);
       }
 
+      let settled = false;
       const reqId = Math.floor(Math.random() * 1000000);
       const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         try { ws.close(); } catch {}
         reject(new Error(`CDP command "${method}" timed out after ${timeoutMs}ms`));
       }, timeoutMs);
 
       ws.onopen = () => {
-        ws.send(JSON.stringify({ id: reqId, method, params }));
+        try {
+          ws.send(JSON.stringify({ id: reqId, method, params }));
+        } catch (sendErr) {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            try { ws.close(); } catch {}
+            reject(sendErr);
+          }
+        }
       };
 
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(String(event.data));
-          if (msg.id === reqId) {
+          if (msg.id === reqId && !settled) {
+            settled = true;
             clearTimeout(timer);
             try { ws.close(); } catch {}
             if (msg.error) {
@@ -267,9 +311,21 @@ export class BrowserOperator {
       };
 
       ws.onerror = (err: any) => {
-        clearTimeout(timer);
-        try { ws.close(); } catch {}
-        reject(new Error(`WebSocket connection error: ${err.message || 'connection failed'}`));
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          try { ws.close(); } catch {}
+          reject(new Error(`WebSocket connection error: ${err.message || 'connection failed'}`));
+        }
+      };
+
+      ws.onclose = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          // If connection closed before receiving reply
+          resolve({});
+        }
       };
     });
   }
@@ -344,12 +400,17 @@ export class BrowserOperator {
       // Small settling delay for navigation
       await new Promise(r => setTimeout(r, 1200));
 
-      // Fetch page title and current URL
-      const titleRes = await this.executeCdpCommand(target.webSocketDebuggerUrl, 'Runtime.evaluate', {
-        expression: 'document.title',
-        returnByValue: true
-      });
-      const title = (titleRes?.result?.value as string) || '';
+      // Fetch page title and current URL safely
+      let title = '';
+      try {
+        const titleRes = await this.executeCdpCommand(target.webSocketDebuggerUrl, 'Runtime.evaluate', {
+          expression: 'document.title',
+          returnByValue: true
+        }, 3000);
+        title = (titleRes?.result?.value as string) || '';
+      } catch {
+        // Fallback gracefully
+      }
 
       const durationMs = Date.now() - start;
 
