@@ -63,7 +63,7 @@ test('Generic Execution - 2. Git validation: accepts git repo, blocks non-git', 
 });
 
 test('Generic Execution - 3. SafetyGate: blocks insecure root filesystem', () => {
-  const rootPath = 'C:\\';
+  const rootPath = '/';
   const gitInspector = new MockGitInspector({
     [rootPath]: {
       isRepo: true,

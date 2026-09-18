@@ -1,18 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { ActionDirective, ActionResult, ActionBatchExecutionResult } from './types.js';
+import {
+  ActionDirective,
+  ActionResult,
+  ActionBatchExecutionResult,
+  ActionPolicy,
+  ExecutedCommandResult
+} from './types.js';
 
 export interface ActionExecutorOptions {
+  policy?: ActionPolicy;
   allowExec?: boolean;
   execTimeoutMs?: number;
 }
 
 export class ActionExecutor {
-  private readonly allowExec: boolean;
-  private readonly execTimeoutMs: number;
+  private readonly policy: ActionPolicy;
 
-  // Deny list of dangerous command prefixes or tokens when EXEC is enabled
   private static readonly BLOCKED_PATTERNS = [
     /(\b|\/)(rm\s+-rf\s+[\/~]|\bformat\b|\bdd\b|\bmkfs\b)/i,
     /(\bshutdown\b|\breboot\b|\binit\s+0\b)/i,
@@ -20,14 +25,37 @@ export class ActionExecutor {
   ];
 
   constructor(options: ActionExecutorOptions = {}) {
-    this.allowExec = options.allowExec ?? true;
-    this.execTimeoutMs = options.execTimeoutMs ?? 30000;
+    const defaultPolicy: ActionPolicy = {
+      allowFileCreate: true,
+      allowFileWrite: true,
+      allowFileRead: true,
+      allowFileDelete: true,
+      allowExec: options.allowExec ?? options.policy?.allowExec ?? true,
+      allowedExecCommands: options.policy?.allowedExecCommands,
+      execTimeoutMs: options.execTimeoutMs ?? options.policy?.execTimeoutMs ?? 30000
+    };
+
+    this.policy = {
+      ...defaultPolicy,
+      ...options.policy
+    };
+  }
+
+  getPolicy(): ActionPolicy {
+    return { ...this.policy };
   }
 
   /**
-   * Fail-closed path validator. Guarantees target is strictly inside workspaceRoot.
+   * Fail-closed path validator.
+   * Guarantees target is strictly inside workspaceRoot and cannot escape via:
+   * 1. Relative traversal (..)
+   * 2. External absolute paths
+   * 3. Symlink escape pointing outside the workspace boundary
    */
-  resolvePathInsideWorkspace(workspaceRoot: string, targetPath: string): { ok: boolean; resolvedPath?: string; error?: string } {
+  resolvePathInsideWorkspace(
+    workspaceRoot: string,
+    targetPath: string
+  ): { ok: boolean; resolvedPath?: string; error?: string } {
     if (!targetPath || typeof targetPath !== 'string') {
       return { ok: false, error: 'Path must be a non-empty string' };
     }
@@ -37,18 +65,13 @@ export class ActionExecutor {
       return { ok: false, error: 'Path cannot be blank' };
     }
 
-    // Resolve relative or absolute path against workspaceRoot
+    // 1. Resolve against workspaceRoot
     const resolved = path.isAbsolute(trimmed)
       ? path.resolve(trimmed)
       : path.resolve(workspaceRoot, trimmed);
 
-    // Compute relative path from workspace root
+    // 2. Lexical relative path check
     const rel = path.relative(workspaceRoot, resolved);
-
-    // Fail-closed checks:
-    // 1. Cannot escape up (starts with .. or ..[/\\])
-    // 2. Cannot be an external absolute path (on Windows C: vs D:)
-    // 3. Cannot be the workspace directory itself for file operations
     if (rel.startsWith('..') || path.isAbsolute(rel) || rel === '') {
       return {
         ok: false,
@@ -56,13 +79,103 @@ export class ActionExecutor {
       };
     }
 
+    // 3. Symlink Escape Protection (canonical realpath check)
+    try {
+      if (fs.existsSync(workspaceRoot)) {
+        const canonicalWorkspace = fs.realpathSync(workspaceRoot);
+
+        // Traverse up to find the closest existing filesystem node
+        let curr = resolved;
+        while (!fs.existsSync(curr) && curr !== path.dirname(curr)) {
+          curr = path.dirname(curr);
+        }
+
+        if (fs.existsSync(curr)) {
+          const canonicalCurr = fs.realpathSync(curr);
+          const relCanonical = path.relative(canonicalWorkspace, canonicalCurr);
+          if (relCanonical.startsWith('..') || path.isAbsolute(relCanonical)) {
+            return {
+              ok: false,
+              error: `Symlink escape violation: path "${trimmed}" resolves via symlink to "${canonicalCurr}" which is outside workspace "${canonicalWorkspace}"`
+            };
+          }
+        }
+      }
+    } catch (err: any) {
+      return {
+        ok: false,
+        error: `Filesystem security verification failed for path "${trimmed}": ${err.message}`
+      };
+    }
+
     return { ok: true, resolvedPath: resolved };
+  }
+
+  /**
+   * Validates command against explicit execution policy (allowlist & patterns).
+   */
+  isCommandAllowed(command: string): { allowed: boolean; reason?: string } {
+    if (!this.policy.allowExec) {
+      return { allowed: false, reason: 'EXEC is disabled by policy (allowExec=false)' };
+    }
+
+    const trimmed = command.trim();
+    if (!trimmed) {
+      return { allowed: false, reason: 'Command is empty' };
+    }
+
+    // 1. Check blocked patterns (fail-closed guardrail against catastrophic commands)
+    for (const pattern of ActionExecutor.BLOCKED_PATTERNS) {
+      if (pattern.test(trimmed)) {
+        return { allowed: false, reason: `Dangerous command pattern detected and blocked: "${trimmed}"` };
+      }
+    }
+
+    // 2. If allowedExecCommands list is configured, enforce strict allowlist
+    if (this.policy.allowedExecCommands && this.policy.allowedExecCommands.length > 0) {
+      const match = this.policy.allowedExecCommands.some(allowed => {
+        const allowedTrim = allowed.trim();
+        return trimmed === allowedTrim || trimmed.startsWith(`${allowedTrim} `);
+      });
+
+      if (!match) {
+        return {
+          allowed: false,
+          reason: `Command "${trimmed}" is not in the allowedExecCommands policy allowlist`
+        };
+      }
+    }
+
+    return { allowed: true };
   }
 
   executeAction(workspaceRoot: string, action: ActionDirective): ActionResult {
     switch (action.type) {
-      case 'FILE_CREATE':
+      case 'FILE_CREATE': {
+        if (!this.policy.allowFileCreate) {
+          return { action, status: 'BLOCKED', error: 'FILE_CREATE is disabled by policy' };
+        }
+        const check = this.resolvePathInsideWorkspace(workspaceRoot, action.path);
+        if (!check.ok || !check.resolvedPath) {
+          return { action, status: 'BLOCKED', error: check.error };
+        }
+        try {
+          fs.mkdirSync(path.dirname(check.resolvedPath), { recursive: true });
+          fs.writeFileSync(check.resolvedPath, action.content, 'utf8');
+          return {
+            action,
+            status: 'SUCCESS',
+            output: `Wrote ${Buffer.byteLength(action.content, 'utf8')} bytes to ${action.path}`
+          };
+        } catch (err: any) {
+          return { action, status: 'FAILED', error: err.message };
+        }
+      }
+
       case 'FILE_WRITE': {
+        if (!this.policy.allowFileWrite) {
+          return { action, status: 'BLOCKED', error: 'FILE_WRITE is disabled by policy' };
+        }
         const check = this.resolvePathInsideWorkspace(workspaceRoot, action.path);
         if (!check.ok || !check.resolvedPath) {
           return { action, status: 'BLOCKED', error: check.error };
@@ -81,6 +194,9 @@ export class ActionExecutor {
       }
 
       case 'FILE_READ': {
+        if (!this.policy.allowFileRead) {
+          return { action, status: 'BLOCKED', error: 'FILE_READ is disabled by policy' };
+        }
         const check = this.resolvePathInsideWorkspace(workspaceRoot, action.path);
         if (!check.ok || !check.resolvedPath) {
           return { action, status: 'BLOCKED', error: check.error };
@@ -97,6 +213,9 @@ export class ActionExecutor {
       }
 
       case 'FILE_DELETE': {
+        if (!this.policy.allowFileDelete) {
+          return { action, status: 'BLOCKED', error: 'FILE_DELETE is disabled by policy' };
+        }
         const check = this.resolvePathInsideWorkspace(workspaceRoot, action.path);
         if (!check.ok || !check.resolvedPath) {
           return { action, status: 'BLOCKED', error: check.error };
@@ -113,25 +232,17 @@ export class ActionExecutor {
       }
 
       case 'EXEC': {
-        if (!this.allowExec) {
-          return { action, status: 'BLOCKED', error: 'EXEC command is disabled by configuration' };
-        }
         const cmd = action.command.trim();
-        if (!cmd) {
-          return { action, status: 'FAILED', error: 'Command is empty' };
+        const check = this.isCommandAllowed(cmd);
+        if (!check.allowed) {
+          return { action, status: 'BLOCKED', error: check.reason };
         }
 
-        // Check blocked patterns
-        for (const pattern of ActionExecutor.BLOCKED_PATTERNS) {
-          if (pattern.test(cmd)) {
-            return { action, status: 'BLOCKED', error: `Dangerous command pattern detected and blocked: "${cmd}"` };
-          }
-        }
-
+        const timeoutMs = this.policy.execTimeoutMs ?? 30000;
         try {
           const stdout = execSync(cmd, {
             cwd: workspaceRoot,
-            timeout: this.execTimeoutMs,
+            timeout: timeoutMs,
             encoding: 'utf8',
             stdio: ['ignore', 'pipe', 'pipe'],
             env: {
@@ -143,7 +254,10 @@ export class ActionExecutor {
         } catch (err: any) {
           const stdout = err.stdout ? String(err.stdout) : '';
           const stderr = err.stderr ? String(err.stderr) : '';
-          const msg = stderr.trim() || stdout.trim() || err.message;
+          const isTimeout = (err.killed && err.signal === 'SIGTERM') || err.code === 'ETIMEDOUT';
+          const msg = isTimeout
+            ? `Command timed out after ${timeoutMs}ms`
+            : stderr.trim() || stdout.trim() || err.message;
           return { action, status: 'FAILED', error: msg, output: stdout };
         }
       }
@@ -159,7 +273,7 @@ export class ActionExecutor {
     const appliedFiles: string[] = [];
     const readFiles: Record<string, string> = {};
     const deletedFiles: string[] = [];
-    const executedCommands: Array<{ command: string; exitCode: number; stdout: string; stderr: string }> = [];
+    const executedCommands: ExecutedCommandResult[] = [];
 
     for (const action of actions) {
       const res = this.executeAction(workspaceRoot, action);

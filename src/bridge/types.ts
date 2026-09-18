@@ -1,5 +1,6 @@
 import { GptTransportStatus } from '../gpt/types.js';
 import { AntigravityExecutionStatus } from '../antigravity/types.js';
+import { ActionPolicy } from '../actions/types.js';
 
 export type LoopStatus =
   | 'PENDING'
@@ -101,4 +102,5 @@ export interface ClosedLoopConfig {
   eventBus?: IEventBus;
   projectName?: string;
   executionContext?: ExecutionContext;
+  actionPolicy?: ActionPolicy;
 }

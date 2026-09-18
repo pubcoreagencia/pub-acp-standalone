@@ -41,11 +41,28 @@ export interface ActionResult {
   error?: string;
 }
 
+export interface ExecutedCommandResult {
+  command: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
 export interface ActionBatchExecutionResult {
   results: ActionResult[];
   appliedFiles: string[];
   readFiles: Record<string, string>;
   deletedFiles: string[];
-  executedCommands: Array<{ command: string; exitCode: number; stdout: string; stderr: string }>;
+  executedCommands: ExecutedCommandResult[];
   summary: string;
+}
+
+export interface ActionPolicy {
+  allowFileCreate?: boolean;
+  allowFileWrite?: boolean;
+  allowFileRead?: boolean;
+  allowFileDelete?: boolean;
+  allowExec?: boolean;
+  allowedExecCommands?: string[];
+  execTimeoutMs?: number;
 }
