@@ -11,6 +11,8 @@ export interface ProjectDefinition {
   validationPolicy?: ValidationPolicy;
 }
 
+export type ExecutorMode = 'gpt-direct' | 'gpt-antigravity';
+
 export interface ExecutionContext {
   runId: string;
   taskId: string;
@@ -26,6 +28,7 @@ export interface ExecutionContext {
   actor?: string;
   validationPolicy?: ValidationPolicy;
   conversationId?: string;
+  executorMode?: ExecutorMode;
 }
 
 export type SafetyBlockReason =

@@ -14,6 +14,7 @@ export interface ExecutionPromptOptions {
   model?: string;
   turn?: number;
   run_id?: string;
+  conversation_id?: string;
   options?: Record<string, unknown>;
 }
 
@@ -35,8 +36,12 @@ export interface IExecutionTransport {
 export class AntigravityExecutionTransport implements IExecutionTransport {
   private readonly bridge: AntigravityBridge;
 
-  constructor(transport?: IAntigravityTransport) {
-    this.bridge = new AntigravityBridge(transport || new AntigravityTransport());
+  constructor(transportOrBridge?: IAntigravityTransport | AntigravityBridge) {
+    if (transportOrBridge instanceof AntigravityBridge) {
+      this.bridge = transportOrBridge;
+    } else {
+      this.bridge = new AntigravityBridge(transportOrBridge || new AntigravityTransport());
+    }
   }
 
   async health(): Promise<{ status: 'ok' | 'error'; error?: string }> {

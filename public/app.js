@@ -17,8 +17,11 @@ const elHeaderStatusText = document.getElementById('header-status-text');
 // Hero Bar Elements
 const elHeroProjectTitle = document.getElementById('hero-project-title');
 const elHeroDemoTag = document.getElementById('hero-demo-tag');
+const elHeroExecutorTag = document.getElementById('hero-executor-tag');
 const elHeroRunId = document.getElementById('hero-run-id');
 const elHeroTaskId = document.getElementById('hero-task-id');
+const elHeroExecutorMode = document.getElementById('hero-executor-mode');
+const elHeroExecutorProvider = document.getElementById('hero-executor-provider');
 const elHeroDuration = document.getElementById('hero-duration');
 const elHeroStateVal = document.getElementById('hero-state-val');
 
@@ -37,6 +40,10 @@ const elDeployPill = document.getElementById('deploy-pill');
 const elDeployUrl = document.getElementById('deploy-url');
 const elDeployHttpStatus = document.getElementById('deploy-http-status');
 const elDeployTime = document.getElementById('deploy-time');
+
+const elBrowserCdpPill = document.getElementById('browser-cdp-pill');
+const elBrowserCdpEndpoint = document.getElementById('browser-cdp-endpoint');
+const elBrowserProfilePath = document.getElementById('browser-profile-path');
 
 const elWsPath = document.getElementById('ws-path');
 const elWsActualRepo = document.getElementById('ws-actual-repo');
@@ -243,7 +250,22 @@ function createCardForEvent(event) {
   const card = document.createElement('div');
   const timeStr = formatTime(event.timestamp);
 
+  const provider = (event.details && event.details.provider) || 'antigravity';
+  const isDirect = provider === 'gpt';
+
   switch (event.type) {
+    case 'EXECUTOR_SELECTED': {
+      card.className = 'flow-card';
+      const mode = (event.details && event.details.executorMode) || 'gpt-direct';
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title" style="color: var(--accent-cyan)">⚡ Modo de Execução: ' + escapeHtml(mode.toUpperCase()) + '</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + ' (Provider: ' + escapeHtml(provider) + ')</div>';
+      return card;
+    }
+
     case 'GPT_DECISION': {
       card.className = 'flow-card flow-card-gpt';
       const promptText = (event.details && (event.details.prompt || event.details.promptSnippet)) || event.summary;
@@ -252,7 +274,7 @@ function createCardForEvent(event) {
 
       card.innerHTML =
         '<div class="flow-card-header">' +
-          '<span class="flow-card-title">🧠 GPT → Antigravity</span>' +
+          '<span class="flow-card-title">' + (isDirect ? '🧠 GPT Decisão (Direct Tools)' : '🧠 GPT → Antigravity') + '</span>' +
           '<span class="flow-card-time monospace">' + timeStr + '</span>' +
         '</div>' +
         '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>' +
@@ -260,6 +282,66 @@ function createCardForEvent(event) {
           '<pre class="code-block" id="cb-' + event.id + '">' + escapeHtml(fullText) + '</pre>' +
           '<div class="flow-actions">' +
             '<button class="flow-btn-link" onclick="toggleExpandCode(\'cb-' + event.id + '\', this)">📖 Ver mensagem completa</button>' +
+            '<button class="flow-btn-link" onclick="copyCode(\'cb-' + event.id + '\')">📋 Copiar</button>' +
+          '</div>' +
+        '</div>';
+      return card;
+    }
+
+    case 'TOOL_STARTED': {
+      card.className = 'flow-card flow-card-ag';
+      const instructionText = (event.details && (event.details.instruction || event.details.instructionSnippet)) || event.summary;
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title" style="color: var(--accent-cyan)">🛠️ Execução de Tools (GPT Direct)</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>' +
+        '<div class="code-container">' +
+          '<pre class="code-block" id="cb-' + event.id + '">' + escapeHtml(instructionText) + '</pre>' +
+          '<div class="flow-actions">' +
+            '<button class="flow-btn-link" onclick="toggleExpandCode(\'cb-' + event.id + '\', this)">📖 Ver instrução completa</button>' +
+            '<button class="flow-btn-link" onclick="copyCode(\'cb-' + event.id + '\')">📋 Copiar</button>' +
+          '</div>' +
+        '</div>';
+      return card;
+    }
+
+    case 'SANDBOX_EXECUTION': {
+      card.className = 'flow-card';
+      const telemetry = event.details && event.details.telemetry;
+      const teleStr = telemetry ? JSON.stringify(telemetry, null, 2) : event.summary;
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title" style="color: #68d391">🛡️ Sandbox Operacional</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>' +
+        (telemetry ? (
+          '<div class="code-container">' +
+            '<pre class="code-block" id="cb-' + event.id + '">' + escapeHtml(teleStr) + '</pre>' +
+            '<div class="flow-actions">' +
+              '<button class="flow-btn-link" onclick="toggleExpandCode(\'cb-' + event.id + '\', this)">📖 Ver telemetria</button>' +
+              '<button class="flow-btn-link" onclick="copyCode(\'cb-' + event.id + '\')">📋 Copiar</button>' +
+            '</div>' +
+          '</div>'
+        ) : '');
+      return card;
+    }
+
+    case 'TOOL_FINISHED': {
+      card.className = 'flow-card flow-card-ag';
+      const responseText = (event.details && (event.details.response || event.details.outputSnippet)) || event.summary;
+      card.innerHTML =
+        '<div class="flow-card-header">' +
+          '<span class="flow-card-title" style="color: #68d391">🛠️ Resultado das Tools</span>' +
+          '<span class="flow-card-time monospace">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="flow-card-summary">' + escapeHtml(event.summary) + '</div>' +
+        '<div class="code-container">' +
+          '<pre class="code-block" id="cb-' + event.id + '">' + escapeHtml(responseText) + '</pre>' +
+          '<div class="flow-actions">' +
+            '<button class="flow-btn-link" onclick="toggleExpandCode(\'cb-' + event.id + '\', this)">📖 Ver saída completa</button>' +
             '<button class="flow-btn-link" onclick="copyCode(\'cb-' + event.id + '\')">📋 Copiar</button>' +
           '</div>' +
         '</div>';
@@ -459,6 +541,25 @@ function renderRunDetail(run) {
   elHeroTaskId.textContent = run.taskId || 'N/A';
   elHeroDuration.textContent = formatDuration(run.durationMs);
 
+  const executorMode = run.executorMode || 'gpt-direct';
+  const executorProvider = run.provider || (executorMode === 'gpt-direct' ? 'gpt' : 'antigravity');
+  if (elHeroExecutorMode) elHeroExecutorMode.textContent = executorMode;
+  if (elHeroExecutorProvider) elHeroExecutorProvider.textContent = executorProvider;
+
+  if (elHeroExecutorTag) {
+    if (executorMode === 'gpt-direct') {
+      elHeroExecutorTag.textContent = 'GPT DIRECT';
+      elHeroExecutorTag.style.background = 'rgba(0, 242, 254, 0.15)';
+      elHeroExecutorTag.style.borderColor = 'var(--accent-cyan)';
+      elHeroExecutorTag.style.color = 'var(--accent-cyan)';
+    } else {
+      elHeroExecutorTag.textContent = 'GPT → AG';
+      elHeroExecutorTag.style.background = 'rgba(255, 170, 0, 0.15)';
+      elHeroExecutorTag.style.borderColor = '#ffa500';
+      elHeroExecutorTag.style.color = '#ffa500';
+    }
+  }
+
   elHeroStateVal.className = 'state-pill ' + statusClass;
   elHeroStateVal.textContent = statusPt;
 
@@ -541,6 +642,7 @@ function escapeHtml(str) {
 // Dispatch Form Elements
 const elDispatchForm = document.getElementById('dispatch-form');
 const elSelectProject = document.getElementById('select-project');
+const elSelectExecutor = document.getElementById('select-executor');
 const elSelectConversation = document.getElementById('select-conversation');
 const elInputInstruction = document.getElementById('input-instruction');
 const elBtnDispatch = document.getElementById('btn-dispatch');
@@ -667,9 +769,11 @@ if (elDispatchForm) {
     }
 
     try {
+      const executorMode = elSelectExecutor ? elSelectExecutor.value : 'gpt-direct';
       const payload = {
         projectId,
-        instruction
+        instruction,
+        executorMode
       };
       if (conversationId) {
         payload.conversationId = conversationId;
@@ -684,7 +788,7 @@ if (elDispatchForm) {
       const body = await res.json().catch(() => ({}));
 
       if (res.status === 202) {
-        showDispatchFeedback(`Execução aceita! Run ID: ${body.runId}`, 'success');
+        showDispatchFeedback(`Execução aceita (${executorMode})! Run ID: ${body.runId}`, 'success');
         if (elInputInstruction) elInputInstruction.value = '';
 
         // Immediate refresh and selection
@@ -708,7 +812,33 @@ if (elDispatchForm) {
   });
 }
 
+// Browser Station Status polling
+async function fetchBrowserStatus() {
+  if (!elBrowserCdpPill) return;
+  try {
+    const res = await fetch('/api/browser/status');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data.status === 'CONNECTED') {
+      elBrowserCdpPill.textContent = 'CONNECTED';
+      elBrowserCdpPill.className = 'matrix-pill pass';
+    } else {
+      elBrowserCdpPill.textContent = 'DISCONNECTED';
+      elBrowserCdpPill.className = 'matrix-pill not-available';
+    }
+    if (elBrowserCdpEndpoint) elBrowserCdpEndpoint.textContent = data.cdpEndpoint || 'http://127.0.0.1:9222';
+    if (elBrowserProfilePath) elBrowserProfilePath.textContent = data.profileDir || '~/Documents/PUB-ACP/browser-profile';
+  } catch {
+    if (elBrowserCdpPill) {
+      elBrowserCdpPill.textContent = 'OFFLINE';
+      elBrowserCdpPill.className = 'matrix-pill not-available';
+    }
+  }
+}
+
 // Initializations
 loadProjects();
 fetchRuns();
+fetchBrowserStatus();
 setInterval(fetchRuns, 5000);
+setInterval(fetchBrowserStatus, 10000);

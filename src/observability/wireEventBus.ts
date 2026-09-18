@@ -60,7 +60,9 @@ export function wireEventBusToRunStore(eventBus: IEventBus, runStore: IRunStore)
           changedFiles: [],
           result: 'NOT_AVAILABLE'
         },
-        events: []
+        events: [],
+        executorMode: (event.details?.executorMode as any) || undefined,
+        provider: (event.details?.provider as string) || undefined
       };
       runStore.saveRun(run);
     }
@@ -75,6 +77,8 @@ export function wireEventBusToRunStore(eventBus: IEventBus, runStore: IRunStore)
           projectName: (event.details?.projectName as string) || run.projectName,
           taskId: (event.details?.taskId as string) || run.taskId,
           project: (event.details?.projectName as string) || (event.details?.project as string) || run.project,
+          executorMode: (event.details?.executorMode as any) || run.executorMode,
+          provider: (event.details?.provider as string) || run.provider,
           workspace: {
             ...run.workspace,
             path: (event.details?.workspacePath as string) || run.workspace.path,
@@ -83,6 +87,13 @@ export function wireEventBusToRunStore(eventBus: IEventBus, runStore: IRunStore)
             branch: (event.details?.branch as string) || run.workspace.branch,
             lastCommit: (event.details?.commit as string) || run.workspace.lastCommit
           }
+        });
+        break;
+
+      case 'EXECUTOR_SELECTED':
+        runStore.updateState(event.runId, 'STARTING', {
+          executorMode: (event.details?.executorMode as any) || run.executorMode,
+          provider: (event.details?.provider as string) || run.provider
         });
         break;
 
@@ -152,12 +163,49 @@ export function wireEventBusToRunStore(eventBus: IEventBus, runStore: IRunStore)
         });
         break;
 
+      case 'TOOL_STARTED':
+        runStore.updateState(event.runId, 'AG_RUNNING', {
+          agExecutions: run.agExecutions + 1,
+          agView: {
+            status: 'RUNNING',
+            currentExecution: `Turn ${event.turn || 1}`,
+            commandOrAction: 'tool.execute',
+            durationMs: 'NOT_AVAILABLE',
+            stdoutSummary: (event.details?.instructionSnippet as string) || 'Direct GPT instruction dispatched',
+            stderrSummary: '',
+            changedFiles: run.agView.changedFiles,
+            result: 'IN_PROGRESS'
+          }
+        });
+        break;
+
       case 'AG_OUTPUT':
         runStore.updateState(event.runId, 'AG_RUNNING', {
           agView: {
             ...run.agView,
             stdoutSummary: (event.details?.outputSnippet as string) || event.summary,
             durationMs: (event.details?.durationMs as number) || run.agView.durationMs
+          }
+        });
+        break;
+
+      case 'SANDBOX_EXECUTION':
+        runStore.updateState(event.runId, 'AG_RUNNING', {
+          agView: {
+            ...run.agView,
+            durationMs: (event.details?.durationMs as number) || run.agView.durationMs,
+            result: (event.details?.status as string) || 'COMPLETED'
+          }
+        });
+        break;
+
+      case 'TOOL_FINISHED':
+        runStore.updateState(event.runId, 'VALIDATING', {
+          agView: {
+            ...run.agView,
+            status: event.details?.status === 'COMPLETED' ? 'COMPLETED' : 'FAILED',
+            durationMs: (event.details?.durationMs as number) || run.agView.durationMs,
+            result: (event.details?.status as string) || 'FINISHED'
           }
         });
         break;

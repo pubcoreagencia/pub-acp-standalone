@@ -216,6 +216,17 @@ export class ControlRoomServer {
         conversationId = body.conversationId.trim();
       }
 
+      // 4.1 Validate executorMode (optional, default: 'gpt-direct', allowed: 'gpt-direct' | 'gpt-antigravity')
+      let executorMode: 'gpt-direct' | 'gpt-antigravity' = 'gpt-direct';
+      if (body.executorMode !== undefined && body.executorMode !== null) {
+        if (body.executorMode !== 'gpt-direct' && body.executorMode !== 'gpt-antigravity') {
+          return this.sendJson(res, 400, {
+            error: "Invalid executorMode. Must be either 'gpt-direct' or 'gpt-antigravity'."
+          });
+        }
+        executorMode = body.executorMode;
+      }
+
       // 5. Create deterministic runId and register initial state in RunStore
       const { randomUUID } = await import('node:crypto');
       const runId = `run-${randomUUID()}`;
@@ -233,7 +244,9 @@ export class ControlRoomServer {
           projectName: project.projectName,
           trigger: 'control-room-ui',
           actor: 'operator',
-          conversationId
+          conversationId,
+          executorMode,
+          provider: executorMode === 'gpt-direct' ? 'gpt' : 'antigravity'
         }
       });
 
@@ -244,6 +257,7 @@ export class ControlRoomServer {
         runId,
         maxTurns,
         conversationId,
+        executorMode,
         trigger: 'control-room-ui',
         actor: 'operator',
         skipRunCreated: true
@@ -322,6 +336,34 @@ export class ControlRoomServer {
     if (pathname === '/api/demo/start' && method === 'POST') {
       const runId = this.demoFeed.generateDemoRun();
       return this.sendJson(res, 201, { message: 'Demo run initiated', runId });
+    }
+
+    // Browser CDP Status Route
+    if (pathname === '/api/browser/status' && method === 'GET') {
+      const home = process.env.HOME || '';
+      const defaultProfile = `${home}/Documents/PUB-ACP/browser-profile`;
+      try {
+        const cdpRes = await fetch('http://127.0.0.1:9222/json/version', { signal: AbortSignal.timeout(1500) });
+        if (cdpRes.ok) {
+          const versionData: any = await cdpRes.json();
+          return this.sendJson(res, 200, {
+            status: 'CONNECTED',
+            cdpEndpoint: 'http://127.0.0.1:9222',
+            profileDir: defaultProfile,
+            browser: versionData.Browser || 'Chrome',
+            webSocketDebuggerUrl: versionData.webSocketDebuggerUrl ? 'CONNECTED' : 'DISCONNECTED'
+          });
+        }
+      } catch {
+        // Fall through to disconnected response
+      }
+      return this.sendJson(res, 200, {
+        status: 'DISCONNECTED',
+        cdpEndpoint: 'http://127.0.0.1:9222',
+        profileDir: defaultProfile,
+        browser: 'Chrome (offline)',
+        webSocketDebuggerUrl: 'N/A'
+      });
     }
 
     // Project Conversations Discovery Route

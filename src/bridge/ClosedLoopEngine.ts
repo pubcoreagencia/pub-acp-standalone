@@ -37,7 +37,7 @@ export class ClosedLoopEngine {
     this.executor = executorTransport ||
       (this.executorProvider === 'gpt'
         ? new GptExecutionTransport(undefined, { policy: config.actionPolicy })
-        : new AntigravityExecutionTransport(this.agBridge.getTransport()));
+        : new AntigravityExecutionTransport(this.agBridge));
 
     this.config = {
       defaultTimeoutMs: config.defaultTimeoutMs || 300000,
@@ -198,53 +198,101 @@ export class ClosedLoopEngine {
       if (this.executedRequests.has(executorRequestId)) throw new Error(`Idempotency conflict: executor request_id ${executorRequestId} already processed.`);
       this.executedRequests.add(executorRequestId);
 
-      this.emitEvent({
-        id: `evt-${randomUUID()}`,
-        runId: loopId,
-        timestamp: executorStartedAt,
-        type: 'AG_STARTED',
-        turn,
-        summary: `Turn ${turn}: Executing ${this.executorProvider} instruction.`,
-        details: { requestId: executorRequestId, provider: this.executorProvider, instructionSnippet: instructionForExecutor.slice(0, 300), instruction: instructionForExecutor }
-      });
+      if (this.executorProvider === 'antigravity') {
+        this.emitEvent({
+          id: `evt-${randomUUID()}`,
+          runId: loopId,
+          timestamp: executorStartedAt,
+          type: 'AG_STARTED',
+          turn,
+          summary: `Turn ${turn}: Executing antigravity instruction.`,
+          details: { requestId: executorRequestId, provider: 'antigravity', instructionSnippet: instructionForExecutor.slice(0, 300), instruction: instructionForExecutor }
+        });
+      } else {
+        this.emitEvent({
+          id: `evt-${randomUUID()}`,
+          runId: loopId,
+          timestamp: executorStartedAt,
+          type: 'TOOL_STARTED',
+          turn,
+          summary: `Turn ${turn}: Direct GPT tool execution initiated.`,
+          details: { requestId: executorRequestId, provider: 'gpt', instructionSnippet: instructionForExecutor.slice(0, 300), instruction: instructionForExecutor }
+        });
+      }
 
       const executorResult = await this.executor.executeTurn(executorSessionId, instructionForExecutor, {
         request_id: executorRequestId,
         cwd: effectiveCwd, turn, run_id: loopId,
         effort: this.config.effort,
         model: this.config.model,
-        timeout_ms: this.config.executorTimeoutMs
+        timeout_ms: this.config.executorTimeoutMs,
+        conversation_id: options.conversationId
       });
 
       const executorCompletedAt = new Date().toISOString();
       const executorDurationMs = Date.now() - executorStartTime;
       currentExecutorResponse = executorResult.response;
 
-      this.emitEvent({
-        id: `evt-${randomUUID()}`,
-        runId: loopId,
-        timestamp: executorCompletedAt,
-        type: 'AG_OUTPUT',
-        turn,
-        summary: `Turn ${turn}: ${this.executorProvider} responded in ${executorDurationMs}ms (${executorResult.status}).`,
-        details: {
-          provider: this.executorProvider,
-          status: executorResult.status,
-          durationMs: executorDurationMs,
-          outputSnippet: executorResult.response.slice(0, 300),
-          response: executorResult.response
-        }
-      });
+      if (this.executorProvider === 'antigravity') {
+        this.emitEvent({
+          id: `evt-${randomUUID()}`,
+          runId: loopId,
+          timestamp: executorCompletedAt,
+          type: 'AG_OUTPUT',
+          turn,
+          summary: `Turn ${turn}: antigravity responded in ${executorDurationMs}ms (${executorResult.status}).`,
+          details: {
+            provider: 'antigravity',
+            status: executorResult.status,
+            durationMs: executorDurationMs,
+            outputSnippet: executorResult.response.slice(0, 300),
+            response: executorResult.response
+          }
+        });
 
-      this.emitEvent({
-        id: `evt-${randomUUID()}`,
-        runId: loopId,
-        timestamp: executorCompletedAt,
-        type: 'AG_FINISHED',
-        turn,
-        summary: `Turn ${turn}: ${this.executorProvider} execution finished.`,
-        details: { provider: this.executorProvider, status: executorResult.status }
-      });
+        this.emitEvent({
+          id: `evt-${randomUUID()}`,
+          runId: loopId,
+          timestamp: executorCompletedAt,
+          type: 'AG_FINISHED',
+          turn,
+          summary: `Turn ${turn}: antigravity execution finished.`,
+          details: { provider: 'antigravity', status: executorResult.status }
+        });
+      } else {
+        // Emit SANDBOX_EXECUTION if toolTelemetry is present
+        const telemetry = (executorResult.metadata as any)?.toolTelemetry;
+        this.emitEvent({
+          id: `evt-${randomUUID()}`,
+          runId: loopId,
+          timestamp: executorCompletedAt,
+          type: 'SANDBOX_EXECUTION',
+          turn,
+          summary: `Turn ${turn}: Direct sandbox actions executed (${executorResult.status}).`,
+          details: {
+            provider: 'gpt',
+            status: executorResult.status,
+            durationMs: executorDurationMs,
+            telemetry
+          }
+        });
+
+        this.emitEvent({
+          id: `evt-${randomUUID()}`,
+          runId: loopId,
+          timestamp: executorCompletedAt,
+          type: 'TOOL_FINISHED',
+          turn,
+          summary: `Turn ${turn}: Direct GPT tool execution finished in ${executorDurationMs}ms (${executorResult.status}).`,
+          details: {
+            provider: 'gpt',
+            status: executorResult.status,
+            durationMs: executorDurationMs,
+            outputSnippet: executorResult.response.slice(0, 300),
+            response: executorResult.response
+          }
+        });
+      }
 
       turnSummaries.push({
         turn,
@@ -275,7 +323,7 @@ export class ClosedLoopEngine {
         loopError = {
           code: executorResult.error?.code || 'EXECUTOR_ERROR',
           message: executorResult.error?.message || `Executor failed on turn ${turn}`,
-          where: 'loop_engine'
+          where: this.executorProvider === 'antigravity' ? 'antigravity' : 'loop_engine'
         };
         this.emitEvent({
           id: `evt-${randomUUID()}`,
