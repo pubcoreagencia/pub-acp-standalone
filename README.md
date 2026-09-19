@@ -97,3 +97,36 @@ npm run test:e2e
   DOM virtualization resilient turn detection
   ```
 
+
+
+## Current Validated State — 2026-09-19
+
+Current operational proof is **GPT-only**.
+
+```text
+ChatGPT Free
+    ↓
+Chrome / CDP :9555
+    ↓
+PUB-ACP-POC local transport :5127
+    ↓
+pub-acp-standalone
+    ↓
+GptRuntimeAdapter
+    ↓
+ClosedLoopEngine
+    ↓
+authorized workspace
+```
+
+Validated behaviors include real GPT Free transport requests, workspace-relative shell execution, runtime failure correction across turns, fail-closed workspace security, and clean build/test verification.
+
+**Verified checkpoints:**
+- ACP correction-loop branch: `fix/gpt-runtime-correction-loop`
+- Validation: unit suite 148/148 PASS; contract suite 25/25 PASS; build PASS
+- PUB MACHINE downstream proof: `feat/acp-pub-machine-e2e`, commit `b8c97d8`
+- Detailed runtime evidence: `docs/VERIFIED_GPT_ONLY_ACP_RUNTIME_2026-09-19.md`
+
+Historical Antigravity bridge documentation and compatibility code may remain in the repository, but Antigravity is **not part of the active runtime path for this checkpoint**.
+
+An agent `complete` signal is not by itself proof of task completion. Repository state, required validation, build and task-specific acceptance criteria remain authoritative.
