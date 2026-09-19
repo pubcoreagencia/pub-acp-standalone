@@ -1,126 +1,83 @@
-# PUB ACP — Multi-Agent Runtime Architecture
+# PUB ACP — GPT Runtime Architecture
 
-## 1. Executive Summary & Core Principle
+## 1. Canonical operating model
 
-O **PUB ACP (Agent Control Plane)** opera como um plano de controle desacoplado de qualquer runtime ou agente específico.
+PUB ACP is a decoupled control plane. The **active execution path is GPT-only**.
 
-### O Princípio Canônico
-> **Antigravity, Codex, Claude Code, Hermes, OpenClaw e outros não são o Core do ACP.**
-> Eles são **Execution Runtimes** intercambiáveis, representados via adapters e governados por contratos formais de capacidades, políticas e segurança.
-
-O Core do ACP é responsável por:
-1. **Governança & Autorização** (`Catalog = Authorization`).
-2. **Contexto & Isolamento de Projetos/Workspaces** (`WorkspaceLock`, `SafetyGate`).
-3. **Orquestração de Descoberta** (`DiscoveryOrchestrator`).
-4. **Ciclo Fechado de Execução** (`ClosedLoopEngine`, `EventBus`, `RunStore`).
-5. **Roteamento de Execução** (`AgentRuntimeRouter`).
-
----
-
-## 2. Diagrama Arquitetural Canônico
+The current production-like path is:
 
 ```text
-                     GPT / Planner
-                           │
-                           ▼
-                     ┌────────────┐
-                     │  PUB ACP   │
-                     │  CONTROL   │
-                     │   PLANE    │
-                     └─────┬──────┘
-                           │
-                     ExecutionPlan
-                           │
-                     RuntimeRouter
-                           │
-       ┌───────────────────┼───────────────────┐
-       │                   │                   │
-       ▼                   ▼                   ▼
- Antigravity Adapter  Codex Adapter   Claude Code Adapter
-       │                   │                   │
-       └───────────────────┼───────────────────┘
-                           │
-                   Hermes / OpenClaw
-                           │
-                           ▼
-                       Workspace
+GPT
+ ↓
+PUB ACP
+ ↓
+Discovery
+ ↓
+Workspace Resolver
+ ↓
+Safety Gate
+ ↓
+Execution Context
+ ↓
+ClosedLoopEngine
+ ↓
+GptRuntimeAdapter
+ ↓
+Workspace Command Executor
+ ↓
+Authorized Workspace
 ```
 
-### Ciclo de Vida Operacional
+The current runtime is `gpt-runtime`. Antigravity-specific components remain in the repository as legacy compatibility and historical test material, but **Antigravity is not part of the active execution path**.
+
+## 2. Core responsibilities
+
+The ACP Core owns:
+
+1. **Governance & authorization** through the project catalog.
+2. **Workspace isolation** through canonicalization, resolver checks, SafetyGate, and WorkspaceLock.
+3. **Project discovery** through DiscoveryOrchestrator and discovery providers.
+4. **Closed-loop execution** through ClosedLoopEngine.
+5. **Observability** through EventBus, RunStore, and Control Room/SSE.
+6. **Runtime abstraction** through `IAgentRuntime` and the GPT adapter.
+
+Discovery is never authorization:
+
 ```text
-Discovery ──► Validation ──► Authorization ──► Execution
- (Candidates)  (Integrity)     (Catalog)     (RuntimeAdapter)
+DISCOVERY → candidate
+CATALOG   → authorization
+SAFETY    → execution boundary
+RUNTIME   → execution
 ```
 
----
+## 3. Identity model
 
-## 3. Matriz de Identidade & Domínio
+| Identity | Meaning |
+|---|---|
+| Repository | Logical Git repository identity |
+| Workspace | Canonical physical checkout path |
+| Project | ACP authorization/governance unit |
+| Runtime | Execution engine registered in ACP |
+| Agent | Logical model/persona used by a runtime |
+| Provider | Technology provider |
+| Account | Credential/quota context |
+| Session | Conversation/session state |
 
-Para eliminar acoplamentos e ambiguidades, os conceitos de identidade são estritamente separados:
+Two physical workspaces may share the same repository identity. Authorization and locks remain bound to the physical Project/Workspace.
 
-| Conceito | Definição | Exemplo |
-| :--- | :--- | :--- |
-| **Repository Identity** | Identidade lógica de versão e histórico Git (remotes, origin URL, commit tree). | `git@github.com:org/repo.git` |
-| **Workspace Identity** | Instância física absoluta e canônica do checkout no disco. | `C:/workspaces/checkout-1` |
-| **Project Identity** | Unidade de autorização e governança no Catálogo ACP. | `pubcoreagencia-pub-acp-standalone` |
-| **Runtime Identity** | Instância de motor/executor registrada no ACP. | `antigravity-local-worker-1` |
-| **Agent Identity** | Especialização lógica, modelo ou persona do agente dentro do runtime. | `gemini-3.8-flash`, `claude-3-7-sonnet` |
-| **Provider** | Fornecedor da tecnologia de execução do agente. | `google`, `openai`, `anthropic`, `oss` |
-| **Account** | Credencial/quota/subscrição operacional que alimenta o runtime. | `billing-tier-pro-team-1` |
-| **Session** | Sessão de interação e conversa mantida no runtime. | `session-uuid-42` |
+## 4. Execution contracts
 
-> **Invariante:** Dois Workspaces físicos distintos podem compartilhar o mesmo Repository Identity (ex.: worktrees). A autorização e locks continuam operando por **Workspace/Project**. O **Runtime** executa apenas sobre um Workspace previamente autorizado.
-
----
-
-## 4. Contratos Abstratos
-
-### 4.1. `AgentCapabilities`
-Capacidades declarativas expressas como dados estruturados, evitando `if (runtime === 'antigravity')`:
+Every runtime implements `IAgentRuntime`:
 
 ```ts
-export type AgentCapability =
-  | 'filesystem.read'
-  | 'filesystem.write'
-  | 'shell.execute'
-  | 'git.read'
-  | 'git.write'
-  | 'test.execute'
-  | 'network.access'
-  | 'interactive'
-  | 'streaming'
-  | 'headless'
-  | 'approval'
-  | 'sandbox';
-
-export interface AgentRuntimeCapabilities {
-  supported: AgentCapability[];
-  maxConcurrency?: number;
-  supportsStreaming: boolean;
-  requiresHumanApproval: boolean;
-  isHeadless: boolean;
-}
-```
-
-### 4.2. `AgentRuntime`
-Contrato que todo adapter deve satisfazer:
-
-```ts
-export interface RuntimeHealth {
-  healthy: boolean;
-  latencyMs?: number;
-  availableCapacity: number; // 0.0 a 1.0
-  message?: string;
-}
-
 export interface IAgentRuntime {
   readonly id: string;
-  readonly provider: string; // 'antigravity' | 'codex' | 'claude-code' | 'hermes' | 'openclaw'
+  readonly provider: string;
   readonly version: string;
   readonly capabilities: AgentRuntimeCapabilities;
 
   checkHealth(): Promise<RuntimeHealth>;
-  
+
   execute(
     plan: ExecutionPlan,
     onEvent?: (event: ExecutionEvent) => void,
@@ -129,113 +86,178 @@ export interface IAgentRuntime {
 }
 ```
 
-### 4.3. Contratos de Execução
-A troca entre `ClosedLoopEngine` e qualquer `IAgentRuntime` é 100% agnóstica:
+The active implementation is:
 
-```ts
-export type RunStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'ABORTED';
+- runtime id: `gpt-runtime`
+- provider: `openai-chatgpt`
+- adapter: `src/runtime/gpt/GptRuntimeAdapter.ts`
+- command bridge: `src/runtime/execution/WorkspaceCommandExecutor.ts`
 
-export interface ExecutionRequest {
-  taskId: string;
-  projectId: string;
-  workspacePath: string;
-  prompt: string;
-  requiredCapabilities: AgentCapability[];
-  timeoutMs?: number;
-  metadata?: Record<string, unknown>;
-}
+## 5. Runtime registry and router
 
-export interface ExecutionPlan {
-  planId: string;
-  runtimeId: string;
-  request: ExecutionRequest;
-  allocatedAccount?: string;
-  createdAt: string;
-}
+`AgentRuntimeRegistry` and `AgentRuntimeRouter` are **generic infrastructure**, not the current execution path.
 
-export interface ExecutionEvent {
-  runId: string;
-  type: 'CHUNK' | 'TOOL_CALL' | 'STATUS_CHANGE' | 'ERROR';
-  payload: Record<string, unknown>;
-  timestamp: string;
-}
+The current `ClosedLoopEngine` receives an `IAgentRuntime` directly and defaults to `GptRuntimeAdapter`.
 
-export interface ExecutionResult {
-  runId: string;
-  status: RunStatus;
-  output: string;
-  diagnostics?: string[];
-  metrics?: {
-    durationMs: number;
-    tokensPrompt?: number;
-    tokensCompletion?: number;
-    turnsCount?: number;
-  };
-}
-```
+Therefore:
 
----
-
-## 5. Componentes do Plano de Controle
-
-### 5.1. `AgentRuntimeRegistry`
-- Armazena e expõe instâncias de `IAgentRuntime`.
-- Responsabilidades: `register(runtime)`, `unregister(runtimeId)`, `get(runtimeId)`, `list()`, `checkAllHealth()`.
-- **Invariante de Segurança:** Não substitui o `ProjectRegistry` e **não concede autorização** a projetos ou diretórios.
-
-### 5.2. `AgentRuntimeRouter`
-- Recebe `ExecutionRequest` + Políticas do Sistema.
-- Seleciona o runtime que satisfaça:
-  1. `requiredCapabilities` é subconjunto de `runtime.capabilities.supported`.
-  2. Runtime reporta `health.healthy === true` e `availableCapacity > 0`.
-  3. Políticas do ACP (ex.: afinidade de projeto, permissões de sandbox).
-- Produz o `ExecutionPlan` imutável para despacho.
-
-### 5.3. Relação com o `ClosedLoopEngine`
-- O `ClosedLoopEngine` deixa de depender de `AntigravityBridge` diretamente.
-- O loop de controle delega a execução para a interface genérica `IAgentRuntime`.
-- O adapter do Antigravity passa a ser apenas `AntigravityRuntimeAdapter implements IAgentRuntime`.
-
----
-
-## 6. Governança de Contas, Capacidade & Fallback
-
-### 6.1. Contas & Capacidade (Account / Capacity)
 ```text
-Runtime
- ├── Account / Profile
- │    ├── capacity (slots disponíveis)
- │    ├── health (status da chave/sessão)
- │    └── limits (rate limits conhecidos da API)
- └── Session (estado transitório da conversa)
+Current:
+ClosedLoopEngine → GptRuntimeAdapter
+
+Future:
+ClosedLoopEngine → RuntimeRouter → selected IAgentRuntime
 ```
-- A camada de contas permite selecionar instâncias de runtime que possuam capacidade operacional no momento.
-- Não há mecanismos de evasão ou rotação ilícita; apenas seleção de rotas de execução legítimas e com slots vagos.
 
-### 6.2. Política de Fallback
-- O fallback não é silencioso nem arbitrário.
-- Se `Runtime A` falha com `UNAVAILABLE` ou `TIMEOUT`:
-  ```text
-  Execution ──► Runtime A ──► Fail ──► Policy Check ──► Runtime B
-  ```
-- O fallback só ocorre se:
-  1. O workspace e a tarefa permitirem explicitamente multi-runtime.
-  2. `Runtime B` possuir paridade com as `requiredCapabilities`.
-  3. A transição for auditada e registrada no `EventBus` do ACP.
+No claim should be made that the router currently selects the active runtime.
 
----
+## 6. GPT execution protocol
 
-## 7. Relação com a Fase 6.2 (Discovery)
+GPT is used as the execution planner. The adapter accepts exactly one JSON action:
 
-A descoberta de runtimes segue as mesmas regras de governança de projetos:
-- **Discovery de Projetos:** descobre candidatos a projetos no disco (`DISCOVERY ≠ AUTHORIZATION`).
-- **Discovery de Runtimes:** descobre binários ou serviços de agentes instalados na máquina (ex: `antigravity.exe`, `claude`, `codex`).
-- **Invariante Absoluto:** Encontrar um runtime ou um projeto **não o autoriza automaticamente**. O `Catalog` permanece como a única fonte de autorização de projetos, e as políticas de configuração do ACP definem os runtimes autorizados a executar.
+```json
+{"action":"shell","command":"<single command>"}
+```
 
----
+or:
 
-## 8. Status do Antigravity
-O `Antigravity` permanece plenamente suportado:
-- Todo o código funcional atual é encapsulado em seu respectivo adapter.
-- Nenhuma feature ou integração existente é removida.
-- O Antigravity passa a ser um participante formal do ecossistema de runtimes do ACP, abrindo as portas para Claude Code, Codex, Hermes e OpenClaw sem refatorações destrutivas.
+```json
+{"action":"complete","message":"<task complete>"}
+```
+
+or:
+
+```json
+{"action":"fail","message":"<cannot continue>"}
+```
+
+The ACP executes `shell` actions from the authorized workspace.
+
+The protocol is intentionally small:
+
+```text
+GPT decision
+   ↓
+validate action
+   ↓
+workspace command boundary
+   ↓
+execute
+   ↓
+capture output
+   ↓
+return result
+```
+
+## 7. Workspace execution boundary
+
+`WorkspaceCommandExecutor` always starts child processes with the resolved workspace as their working directory.
+
+The executor also rejects explicit shell-level escape patterns such as:
+
+- directory changes outside the workspace (`cd`, `pushd`, `Set-Location`)
+- Windows drive-absolute and UNC paths
+- POSIX absolute paths
+- parent traversal paths such as `..\\` and `../`
+
+This is **defense in depth, not a full OS sandbox**.
+
+A shell can invoke arbitrary programs, and those programs may themselves access the filesystem. Full arbitrary-command isolation requires an operating-system/container sandbox and is outside this V0 boundary.
+
+The invariant for V0 is therefore:
+
+> The ACP refuses explicit command forms whose path semantics clearly request execution or file access outside the authorized workspace.
+
+## 8. Validation semantics
+
+Validation is independent from execution success:
+
+```text
+RUNTIME COMPLETED
+      ↓
+PROJECT VALIDATOR
+      ↓
+PASS → continue
+FAIL + turns remaining → CORRECTION → GPT
+FAIL + no turns → RUN_FAILED
+```
+
+`OPTIONAL` validation records warnings without blocking.
+
+`REQUIRED` validation can block completion.
+
+`RUN_COMPLETED` must never be interpreted as `VALIDATION_PASSED`.
+
+## 9. Discovery architecture
+
+Discovery is a bounded, fail-soft subsystem.
+
+Providers currently include filesystem and Git discovery. Discovery guarantees:
+
+- bounded roots
+- maximum depth/candidate limits
+- cancellation/global timeout
+- canonical workspace paths
+- deterministic sorting
+- deduplication by canonical workspace path
+- separation of repository identity from workspace identity
+- zero authorization side effects
+
+The Discovery package must remain independent from Catalog and ProjectRegistry.
+
+## 10. Control Room
+
+Control Room is observability, not execution.
+
+```text
+ClosedLoopEngine
+       ↓
+    EventBus
+       ↓
+    RunStore
+       ↓
+       SSE
+       ↓
+ Control Room UI
+```
+
+The UI must consume execution state and telemetry. It does not become an alternate execution engine.
+
+## 11. Legacy Antigravity material
+
+The repository still contains Antigravity-oriented adapters, session stores, and historical tests.
+
+These are retained for compatibility/history during the migration.
+
+They are **not the active runtime**.
+
+The active architecture must not depend on:
+
+- Antigravity sessions
+- Antigravity bridge execution
+- Antigravity ACP-LAB
+- copy/paste between GPT and another coding agent
+
+A live Antigravity ACP-LAB endpoint is therefore not required for the GPT-only unit/contract/integration baseline.
+
+## 12. Current proof boundary
+
+The validated local baseline for the current branch is:
+
+```text
+Unit       141 PASS
+Contract    25 PASS
+Integration  9 PASS / 2 SKIP
+E2E         1 PASS / 3 SKIP
+Build       PASS
+```
+
+The integration/E2E skips are live-infrastructure checks for ACP-LAB/GPT endpoints and are not code failures.
+
+## 13. Next hardening direction
+
+The next security boundary after explicit command rejection is a true OS-level sandbox/container policy.
+
+That future layer should enforce filesystem and process restrictions independently of GPT prompt compliance.
+
+Until then, the ACP should treat GPT-provided shell commands as untrusted input and preserve fail-closed workspace authorization at every dispatch boundary.

@@ -18,17 +18,60 @@ export interface WorkspaceCommandResult {
   durationMs: number;
 }
 
+function normalizeForInspection(value: string): string {
+  return value.replace(/\u0000/g, '').trim();
+}
+
+function hasShellNavigationEscape(command: string): boolean {
+  const navigation = /(?:^|[;&|]\s*)(?:cd(?:\s|\.\.)|chdir\b|pushd\b|set-location\b|sl\b)/i;
+  return navigation.test(command);
+}
+
+function hasExplicitAbsolutePath(command: string): boolean {
+  const unixAbsolute = /(?:^|[\s"'=(>])\/(?!\/|\*)/;
+  const windowsDrive = /(?:^|[\s"'=(>])[A-Za-z]:[\\/]/;
+  const uncPath = /(?:^|[\s"'=(>])\\\\[^\s"'<>|]+/;
+  return unixAbsolute.test(command) || windowsDrive.test(command) || uncPath.test(command);
+}
+
+function hasParentTraversal(command: string): boolean {
+  return /(?:^|[\s"'=(>])\.\.(?:[\\/]|$)/.test(command);
+}
+
+export function validateWorkspaceCommand(command: string): string | null {
+  const normalized = normalizeForInspection(command);
+
+  if (!normalized) {
+    return 'Command is empty.';
+  }
+
+  if (hasShellNavigationEscape(normalized)) {
+    return 'Command rejected: shell directory navigation is not allowed.';
+  }
+
+  if (hasParentTraversal(normalized)) {
+    return 'Command rejected: parent-directory traversal is not allowed.';
+  }
+
+  if (hasExplicitAbsolutePath(normalized)) {
+    return 'Command rejected: explicit absolute or UNC filesystem paths are not allowed.';
+  }
+
+  return null;
+}
+
 export class WorkspaceCommandExecutor {
   async execute(request: WorkspaceCommandRequest): Promise<WorkspaceCommandResult> {
     const started = Date.now();
     const runId = request.runId || `cmd-${randomUUID()}`;
     const workspacePath = path.resolve(request.workspacePath);
 
-    if (!request.command?.trim()) {
+    const commandError = validateWorkspaceCommand(request.command || '');
+    if (commandError) {
       return {
         runId,
         status: 'FAILED',
-        output: 'Command is empty.',
+        output: commandError,
         exitCode: null,
         durationMs: Date.now() - started
       };
