@@ -12,6 +12,10 @@ import { SafetyGate } from '../multiproject/SafetyGate.js';
 import { ClosedLoopEngine } from '../bridge/ClosedLoopEngine.js';
 import { ProjectDispatcher, IProjectDispatcher } from '../multiproject/ProjectDispatcher.js';
 import { ExecutionContext, ProjectDefinition } from '../multiproject/types.js';
+import { ProjectValidator } from '../validation/ProjectValidator.js';
+import { IProjectValidator } from '../validation/types.js';
+import { GptRuntimeAdapter } from '../runtime/gpt/GptRuntimeAdapter.js';
+import { IAgentRuntime } from '../runtime/IAgentRuntime.js';
 
 import { ProjectCatalogLoader } from '../catalog/ProjectCatalogLoader.js';
 import { IProjectCatalog } from '../catalog/types.js';
@@ -29,6 +33,8 @@ export interface ControlPlaneOptions {
   projectCatalog?: IProjectCatalog;
   resolver?: WorkspaceResolver;
   safetyGate?: SafetyGate;
+  validator?: IProjectValidator;
+  runtime?: IAgentRuntime;
   engineFactory?: (context: ExecutionContext) => ClosedLoopEngine;
 }
 
@@ -42,6 +48,8 @@ export interface ControlPlane {
   projectCatalog?: IProjectCatalog;
   resolver: WorkspaceResolver;
   safetyGate: SafetyGate;
+  validator: IProjectValidator;
+  runtime: IAgentRuntime;
   dispatcher: IProjectDispatcher;
   currentProject?: ProjectDefinition;
 }
@@ -68,6 +76,8 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
   // 3. Workspace Resolver & Safety Gate
   const resolver = options.resolver || new WorkspaceResolver(projectRegistry, gitInspector);
   const safetyGate = options.safetyGate || new SafetyGate();
+  const validator = options.validator || new ProjectValidator();
+  const runtime = options.runtime || new GptRuntimeAdapter();
 
   // 4. Load & register authorized projects from ProjectCatalog (if provided or discoverable)
   const projectCatalog = options.projectCatalog !== undefined ? options.projectCatalog : new FileProjectCatalog();
@@ -107,10 +117,11 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
 
   // 5. Canonical Engine Factory (connecting ClosedLoopEngine with shared EventBus)
   const engineFactory = options.engineFactory || ((context: ExecutionContext) =>
-    new ClosedLoopEngine(undefined, undefined, {
+    new ClosedLoopEngine(undefined, runtime, {
       cwd: context.workspacePath,
       executionContext: context,
-      eventBus
+      eventBus,
+      validator
     })
   );
 
@@ -136,6 +147,8 @@ export async function createControlPlane(options: ControlPlaneOptions = {}): Pro
     projectCatalog,
     resolver,
     safetyGate,
+    validator,
+    runtime,
     dispatcher,
     currentProject
   };
