@@ -64,49 +64,36 @@ test('Multi-Project Proof: Executes project-a and project-b in total isolation w
     const resolver = new WorkspaceResolver(registry);
     const safetyGate = new SafetyGate();
 
-    const agCallsPerRun = new Map<string, string[]>();
+    const runtimeWorkspacesPerRun = new Map<string, string[]>();
 
     const engineFactory = (ctx: any) => {
-      return new ClosedLoopEngine(
-        {
-          health: async () => ({ status: 'ok', initialized: true }),
-          createSession: () => `sess-${ctx.projectId}`,
-          sendPrompt: async (prompt, opts) => ({
-            request_id: opts?.request_id || 'req',
-            session_id: opts?.session_id || 'sess',
-            status: 'COMPLETED',
-            text: `Instruction for ${ctx.projectId}`,
-            duration_ms: 5
-          }),
-          continueSession: async (sess, prompt, opts) => ({
-            request_id: opts?.request_id || 'req',
-            session_id: sess,
-            status: 'COMPLETED',
-            text: `Instruction for ${ctx.projectId}`,
-            duration_ms: 5
-          })
+      const runtime = {
+        id: 'gpt-runtime-test',
+        provider: 'test',
+        version: '1',
+        capabilities: {
+          supported: ['filesystem.read', 'filesystem.write', 'shell.execute'],
+          supportsStreaming: false,
+          requiresHumanApproval: false,
+          isHeadless: true
         },
-        {
-          health: async () => ({ status: 'ok', agyPath: 'mock' }),
-          sendPrompt: async (prompt, opts) => {
-            const list = agCallsPerRun.get(ctx.runId) || [];
-            list.push(opts?.cwd || '');
-            agCallsPerRun.set(ctx.runId, list);
-            return {
-              request_id: opts?.request_id || 'ag-req',
-              session_id: opts?.session_id || 'ag-sess',
-              conversation_id: `conv-${ctx.projectId}`,
-              status: 'COMPLETED',
-              response: `Executed in ${opts?.cwd}`,
-              duration_ms: 10
-            };
-          }
-        },
-        {
-          eventBus,
-          executionContext: ctx
+        checkHealth: async () => ({ healthy: true, availableCapacity: 1 }),
+        execute: async (plan: any) => {
+          const list = runtimeWorkspacesPerRun.get(ctx.runId) || [];
+          list.push(plan.request.workspacePath);
+          runtimeWorkspacesPerRun.set(ctx.runId, list);
+          return {
+            runId: plan.planId,
+            status: 'COMPLETED',
+            output: `Executed in ${plan.request.workspacePath}`,
+            metrics: { durationMs: 5, turnsCount: 1 }
+          };
         }
-      );
+      };
+      return new ClosedLoopEngine(undefined, runtime, {
+        eventBus,
+        executionContext: ctx
+      });
     };
 
     const contextStore = new MemoryProjectContextStore();
@@ -141,8 +128,8 @@ test('Multi-Project Proof: Executes project-a and project-b in total isolation w
     assert.equal(resB.context?.projectId, 'project-b');
 
     // 3. Verify absolute isolation in execution
-    const cwdsA = agCallsPerRun.get('RUN-ALPHA-001');
-    const cwdsB = agCallsPerRun.get('RUN-BETA-001');
+    const cwdsA = runtimeWorkspacesPerRun.get('RUN-ALPHA-001');
+    const cwdsB = runtimeWorkspacesPerRun.get('RUN-BETA-001');
 
     assert.equal(cwdsA?.length, 1);
     assert.equal(cwdsA?.[0], repoA);
@@ -173,7 +160,7 @@ test('Multi-Project Proof: Executes project-a and project-b in total isolation w
   }
 });
 
-test('Negative Safety Test: Incompatible workspace repository BLOCKS execution and AG is NEVER called (AG_CALL_COUNT = 0)', async () => {
+test('Negative Safety Test: Incompatible workspace repository BLOCKS execution and AG is NEVER called (RUNTIME_CALL_COUNT = 0)', async () => {
   // Create workspace with repo-b, but configure registry as project-a with expected repo-a
   const repoMismatchWorkspace = createControlledGitRepo('mismatch-ws', 'https://github.com/pubcoreagencia/wrong-repo-b.git', 'main');
 
@@ -203,7 +190,7 @@ test('Negative Safety Test: Incompatible workspace repository BLOCKS execution a
     const resolver = new WorkspaceResolver(registry);
     const safetyGate = new SafetyGate();
 
-    let agCallCount = 0;
+    let runtimeCallCount = 0;
     const engineFactory = (ctx: any) => {
       return new ClosedLoopEngine(
         {
@@ -215,7 +202,7 @@ test('Negative Safety Test: Incompatible workspace repository BLOCKS execution a
         {
           health: async () => ({ status: 'ok', agyPath: 'mock' }),
           sendPrompt: async () => {
-            agCallCount++;
+            runtimeCallCount++;
             return {
               request_id: 'r',
               session_id: 's',
@@ -248,15 +235,15 @@ test('Negative Safety Test: Incompatible workspace repository BLOCKS execution a
     assert.equal(result.safetyBlocked, true);
     assert.equal(result.blockedReason, 'WORKSPACE_REPOSITORY_MISMATCH');
 
-    // 2. CRITICAL PROOF: AG was NEVER called
-    assert.equal(agCallCount, 0, 'SAFETY GATE FAILURE: AG was invoked when it should have been blocked!');
+    // 2. CRITICAL PROOF: runtime was never called
+    assert.equal(runtimeCallCount, 0, 'SAFETY GATE FAILURE: runtime was invoked when it should have been blocked!');
 
-    // 3. Verify EventBus contains SAFETY_GATE_BLOCKED and NO AG_STARTED event
+    // 3. Verify EventBus contains SAFETY_GATE_BLOCKED and NO RUNTIME_STARTED event
     const events = eventBus.getRecentEvents('RUN-SAFETY-BLOCKED-001');
     const types = events.map(e => e.type);
 
     assert.ok(types.includes('SAFETY_GATE_BLOCKED'));
-    assert.equal(types.includes('AG_STARTED'), false, 'AG_STARTED event must NOT exist for blocked run');
+    assert.equal(types.includes('RUNTIME_STARTED'), false, 'RUNTIME_STARTED event must NOT exist for blocked run');
 
     // 4. Verify Control Room records the run as BLOCKED
     const runRes = await fetch(`${url}/api/runs/RUN-SAFETY-BLOCKED-001`);
@@ -269,7 +256,7 @@ test('Negative Safety Test: Incompatible workspace repository BLOCKS execution a
   }
 });
 
-test('Conversation Safety Contract: conversationId from another workspace BLOCKS execution with zero AG calls', async () => {
+test('Conversation Safety Contract: conversationId from another workspace BLOCKS execution with zero runtime calls', async () => {
   const repoA = createControlledGitRepo('conv-safety-a', 'https://github.com/pubcoreagencia/controlled-repo-a.git', 'main');
   const repoB = createControlledGitRepo('conv-safety-b', 'https://github.com/pubcoreagencia/controlled-repo-b.git', 'main');
 
@@ -306,7 +293,7 @@ test('Conversation Safety Contract: conversationId from another workspace BLOCKS
     const resolver = new WorkspaceResolver(registry);
     const safetyGate = new SafetyGate();
 
-    let agCallCount = 0;
+    let runtimeCallCount = 0;
     const engineFactory = (ctx: any) => {
       return new ClosedLoopEngine(
         {
@@ -318,7 +305,7 @@ test('Conversation Safety Contract: conversationId from another workspace BLOCKS
         {
           health: async () => ({ status: 'ok', agyPath: 'mock' }),
           sendPrompt: async () => {
-            agCallCount++;
+            runtimeCallCount++;
             return { request_id: 'r', session_id: 's', conversation_id: 'c', status: 'COMPLETED', response: 'done', duration_ms: 5 };
           }
         },
@@ -353,14 +340,14 @@ test('Conversation Safety Contract: conversationId from another workspace BLOCKS
     assert.equal(result.blockedReason, 'SECURITY_RULE_VIOLATION');
     assert.ok(result.blockedMessage?.includes('does not belong to project workspace'));
 
-    // 2. AG was NEVER called
-    assert.equal(agCallCount, 0, 'Zero AG calls must be made on conversation mismatch');
+    // 2. runtime was never called
+    assert.equal(runtimeCallCount, 0, 'Zero runtime calls must be made on conversation mismatch');
 
     // 3. EventBus verification
     const events = eventBus.getRecentEvents('RUN-CONV-BLOCKED-001');
     const types = events.map(e => e.type);
     assert.ok(types.includes('SAFETY_GATE_BLOCKED'));
-    assert.equal(types.includes('AG_STARTED'), false);
+    assert.equal(types.includes('RUNTIME_STARTED'), false);
 
     // 4. Control Room records run as BLOCKED
     const runRes = await fetch(`${url}/api/runs/RUN-CONV-BLOCKED-001`);
@@ -374,7 +361,7 @@ test('Conversation Safety Contract: conversationId from another workspace BLOCKS
   }
 });
 
-test('Workspace Lock Contract: concurrent run on same workspace is BLOCKED with zero AG calls and recorded as BLOCKED', async () => {
+test('Workspace Lock Contract: concurrent run on same workspace is BLOCKED with zero runtime calls and recorded as BLOCKED', async () => {
   const repo = createControlledGitRepo('lock-contract-repo', 'https://github.com/pubcoreagencia/lock-repo.git', 'main');
 
   const eventBus = new EventBus();
@@ -402,7 +389,7 @@ test('Workspace Lock Contract: concurrent run on same workspace is BLOCKED with 
     const resolver = new WorkspaceResolver(registry);
     const safetyGate = new SafetyGate();
 
-    let agCallCount = 0;
+    let runtimeCallCount = 0;
     let releaseEngineRun1: () => void;
     const run1EngineGate = new Promise<void>(resolve => {
       releaseEngineRun1 = resolve;
@@ -419,7 +406,7 @@ test('Workspace Lock Contract: concurrent run on same workspace is BLOCKED with 
         {
           health: async () => ({ status: 'ok', agyPath: 'mock' }),
           sendPrompt: async () => {
-            agCallCount++;
+            runtimeCallCount++;
             await run1EngineGate;
             return { request_id: 'r', session_id: 's', conversation_id: 'c', status: 'COMPLETED', response: 'done', duration_ms: 5 };
           }
@@ -464,7 +451,7 @@ test('Workspace Lock Contract: concurrent run on same workspace is BLOCKED with 
     assert.equal(result1.ok, true);
 
     // Only Run 1 called AG, Run 2 made 0 calls
-    assert.equal(agCallCount, 1, 'AG must only be called for Run 1; Run 2 must make 0 AG calls');
+    assert.equal(runtimeCallCount, 1, 'AG must only be called for Run 1; Run 2 must make 0 runtime calls');
 
     // Control Room inspection for Run 2
     const run2Res = await fetch(`${url}/api/runs/RUN-LOCK-002`);
@@ -476,7 +463,7 @@ test('Workspace Lock Contract: concurrent run on same workspace is BLOCKED with 
     const eventsRun2 = eventBus.getRecentEvents('RUN-LOCK-002');
     const typesRun2 = eventsRun2.map(e => e.type);
     assert.ok(typesRun2.includes('WORKSPACE_LOCK_BLOCKED'));
-    assert.equal(typesRun2.includes('AG_STARTED'), false);
+    assert.equal(typesRun2.includes('RUNTIME_STARTED'), false);
   } finally {
     await server.stop();
     rmSync(repo, { recursive: true, force: true });
