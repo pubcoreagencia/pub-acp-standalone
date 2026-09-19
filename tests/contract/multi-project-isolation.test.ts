@@ -65,6 +65,8 @@ test('Multi-Project Proof: Executes project-a and project-b in total isolation w
     const safetyGate = new SafetyGate();
 
     const runtimeWorkspacesPerRun = new Map<string, string[]>();
+    let runtimeCallCount = 0;
+    const run1EngineGate = Promise.resolve();
 
     const engineFactory = (ctx: any) => {
       const runtime = {
@@ -80,6 +82,11 @@ test('Multi-Project Proof: Executes project-a and project-b in total isolation w
         checkHealth: async () => ({ healthy: true, availableCapacity: 1 }),
         execute: async (plan: any) => {
           runtimeCallCount++;
+          const runId = plan.request?.metadata?.runId || plan.planId;
+          const workspacePath = plan.request?.workspacePath;
+          const existing = runtimeWorkspacesPerRun.get(runId) || [];
+          existing.push(workspacePath);
+          runtimeWorkspacesPerRun.set(runId, existing);
           await run1EngineGate;
           return {
             runId: plan.planId,
@@ -395,23 +402,32 @@ test('Workspace Lock Contract: concurrent run on same workspace is BLOCKED with 
     });
 
     const engineFactory = (ctx: any) => {
-      return new ClosedLoopEngine(
-        {
-          health: async () => ({ status: 'ok', initialized: true }),
-          createSession: () => 'sess',
-          sendPrompt: async () => ({ request_id: 'r', session_id: 's', status: 'COMPLETED', text: 'ok', duration_ms: 5 }),
-          continueSession: async () => ({ request_id: 'r', session_id: 's', status: 'COMPLETED', text: 'ok', duration_ms: 5 })
+      const runtime = {
+        id: 'gpt-runtime-lock-test',
+        provider: 'test',
+        version: '1',
+        capabilities: {
+          supported: ['filesystem.read', 'filesystem.write', 'shell.execute'],
+          supportsStreaming: false,
+          requiresHumanApproval: false,
+          isHeadless: true
         },
-        {
-          health: async () => ({ status: 'ok', agyPath: 'mock' }),
-          sendPrompt: async () => {
-            runtimeCallCount++;
-            await run1EngineGate;
-            return { request_id: 'r', session_id: 's', conversation_id: 'c', status: 'COMPLETED', response: 'done', duration_ms: 5 };
-          }
-        },
-        { eventBus, executionContext: ctx }
-      );
+        checkHealth: async () => ({ healthy: true, availableCapacity: 1 }),
+        execute: async () => {
+          runtimeCallCount++;
+          await run1EngineGate;
+          return {
+            runId: ctx.runId,
+            status: 'COMPLETED',
+            output: 'done',
+            metrics: { durationMs: 5, turnsCount: 1 }
+          };
+        }
+      };
+      return new ClosedLoopEngine(undefined, runtime, {
+        eventBus,
+        executionContext: ctx
+      });
     };
 
     const contextStore = new MemoryProjectContextStore();
