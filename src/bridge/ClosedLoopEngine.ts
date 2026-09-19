@@ -202,12 +202,13 @@ export class ClosedLoopEngine {
       });
 
       if (runtimeResult.status !== 'COMPLETED') {
-        overallStatus = runtimeResult.status === 'ABORTED' ? 'ABORTED' : 'FAILED';
-        loopError = {
-          code: 'RUNTIME_EXECUTION_FAILED',
-          message: runtimeResult.diagnostics?.join('; ') || `Runtime failed on turn ${turn}.`,
-          where: 'loop_engine'
-        };
+        const failureMessage = [
+          '[RUNTIME EXECUTION FAILURE]',
+          runtimeResult.output || '(no runtime output)',
+          ...(runtimeResult.diagnostics || []),
+          'Inspect the current workspace state and issue a corrected next action.',
+          'Do not repeat the rejected or failing command.'
+        ].join('\\n');
 
         turnSummaries.push({
           turn,
@@ -231,12 +232,45 @@ export class ClosedLoopEngine {
             runtime_duration_ms: runtimeDurationMs,
             total_turn_duration_ms: runtimeDurationMs
           },
-          status: overallStatus === 'ABORTED' ? 'FAILED' : 'FAILED',
+          status: 'FAILED',
           error: {
             code: 'RUNTIME_EXECUTION_FAILED',
-            message: loopError.message
+            message: runtimeResult.diagnostics?.join('; ') || 'Runtime failed on turn ' + turn + '.'
           }
         });
+
+        if (runtimeResult.status === 'ABORTED') {
+          overallStatus = 'ABORTED';
+          loopError = {
+            code: 'RUNTIME_EXECUTION_ABORTED',
+            message: runtimeResult.diagnostics?.join('; ') || 'Runtime aborted on turn ' + turn + '.',
+            where: 'loop_engine'
+          };
+          break;
+        }
+
+        if (turn < maxTurns) {
+          previousRuntimeResponse = failureMessage;
+          this.emitEvent({
+            id: 'evt-' + randomUUID(),
+            runId: loopId,
+            timestamp: new Date().toISOString(),
+            type: 'CORRECTION',
+            turn,
+            summary: 'Runtime execution failed. Returning diagnostics to GPT runtime for correction.',
+            details: {
+              failure: failureMessage
+            }
+          });
+          continue;
+        }
+
+        overallStatus = 'FAILED';
+        loopError = {
+          code: 'RUNTIME_EXECUTION_FAILED',
+          message: runtimeResult.diagnostics?.join('; ') || 'Runtime failed on turn ' + turn + '.',
+          where: 'loop_engine'
+        };
         break;
       }
 
