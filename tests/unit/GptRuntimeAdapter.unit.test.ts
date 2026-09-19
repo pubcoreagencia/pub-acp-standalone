@@ -82,3 +82,42 @@ test('GptRuntimeAdapter completes without shell execution when GPT says complete
   assert.equal(result.status, 'COMPLETED');
   assert.equal(result.output, 'done');
 });
+
+
+test('GptRuntimeAdapter planning prompt explicitly requires workspace-relative shell commands', async () => {
+  let capturedPrompt = '';
+  const captureGpt: IGptTransport = {
+    async health() { return { status: 'ok', initialized: true, isProcessing: false }; },
+    async sendPrompt(prompt: string) {
+      capturedPrompt = prompt;
+      return {
+        request_id: 'req-3',
+        session_id: 'session-3',
+        status: 'COMPLETED',
+        text: JSON.stringify({ action: 'complete', message: 'done' }),
+        duration_ms: 1
+      };
+    },
+    createSession() { return 'session-3'; },
+    async continueSession() { return this.sendPrompt(''); }
+  };
+
+  const runtime = new GptRuntimeAdapter({ gptTransport: captureGpt });
+  const result = await runtime.execute({
+    planId: 'plan-prompt-safety',
+    runtimeId: runtime.id,
+    request: {
+      taskId: 'task-prompt-safety',
+      projectId: 'test-project',
+      workspacePath: 'C:\\workspace\\project',
+      prompt: 'inspect the repository',
+      requiredCapabilities: ['shell.execute']
+    },
+    createdAt: new Date().toISOString()
+  });
+
+  assert.equal(result.status, 'COMPLETED');
+  assert.match(capturedPrompt, /Use workspace-relative paths only/i);
+  assert.match(capturedPrompt, /NEVER put an absolute filesystem path/i);
+  assert.match(capturedPrompt, /NEVER use cd/i);
+});
