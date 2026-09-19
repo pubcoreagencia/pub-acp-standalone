@@ -1,6 +1,6 @@
 # pub-acp-standalone
 
-Independent Black-Box Consumer for `pub-acp-lab`.
+Independent GPT-only autonomous execution client with provider-neutral HTTP transport.
 
 ## Propósito
 
@@ -18,20 +18,22 @@ PUB-ACP-STANDALONE
         │
         │ HTTP / JSON
         ▼
-PUB-ACP-LAB
+GPT Transport
         │
         ▼
-Chrome isolado
+OpenAI-compatible endpoint
         │
         ▼
-ChatGPT Free
+GPT model
 ```
 
 ### O que o standalone conhece:
-* HTTP endpoints (`GET /v1/health`, `POST /v1/transport/prompt`)
+* OpenAI-compatible `GET /models`
+* OpenAI-compatible `POST /chat/completions`
 * JSON request e response
 * `request_id`, `session_id`, `timeout_ms`
 * Contratos de erro HTTP e JSON
+* `GPT_BASE_URL`, `GPT_API_KEY`, `GPT_MODEL`
 
 ### O que o standalone NÃO conhece:
 * Chrome, CDP, DOM
@@ -52,17 +54,20 @@ npm run build
 
 ## Configuração
 
-O endpoint do ACP-LAB pode ser configurado via variável de ambiente:
+O transporte GPT usa qualquer endpoint OpenAI-compatible:
 
 ```bash
-# Padrão: http://127.0.0.1:5125
-export ACP_LAB_URL=http://127.0.0.1:5125
+export GPT_BASE_URL=https://api.openai.com/v1
+export GPT_API_KEY=...
+export GPT_MODEL=...
 ```
+
+Um gateway local pode ser usado opcionalmente, configurando `GPT_BASE_URL` para o seu endpoint `/v1`.
 
 ## Comandos CLI
 
 ```bash
-# Verificar saúde do ACP-LAB
+# Verificar saúde do endpoint GPT
 npm run cli:health
 # ou após build:
 node dist/cli/index.js health
@@ -85,7 +90,11 @@ npm run test:integration
 npm run test:e2e
 ```
 
-## Known Limitation — ChatGPT DOM Virtualization
+## Legado
+
+Os artefatos do ACP-LAB/Antigravity permanecem no repositório apenas como histórico e compatibilidade. Eles não fazem parte do caminho GPT-only ativo.
+
+## Known Limitation — Provider compatibility
 
 * **Conversas Longas:** O ChatGPT pode virtualizar e remover mensagens antigas do DOM em conversas com múltiplos turnos.
 * **Mecanismo Atual:** O driver do ACP-LAB utiliza a contagem de nós `assistant` como parte da detecção de novos turnos.
