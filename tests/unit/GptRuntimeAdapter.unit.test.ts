@@ -80,7 +80,7 @@ test('GptRuntimeAdapter completes without shell execution when GPT says complete
   });
 
   assert.equal(result.status, 'COMPLETED');
-  assert.equal(result.output, 'done');
+  assert.equal(result.output, '[[ACP_COMPLETE]] done');
 });
 
 
