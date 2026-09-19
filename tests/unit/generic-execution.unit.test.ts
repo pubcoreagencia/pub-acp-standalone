@@ -84,70 +84,27 @@ test('Generic Execution - 3. SafetyGate: blocks insecure root filesystem', () =>
   assert.match(safetyResult.message || '', /root filesystem is blocked/);
 });
 
-test('Generic Execution - 4. ClosedLoopEngine receives ExecutionContext and propagates validated CWD to AG', async () => {
+test('Generic Execution - 4. ClosedLoopEngine propagates validated workspace to runtime', async () => {
   const cwd = process.cwd();
-  const gitInspector = new MockGitInspector({
-    [cwd]: {
-      isRepo: true,
-      remote: 'https://github.com/pubcoreagencia/test-project.git',
-      branch: 'main'
-    }
-  });
-
+  const gitInspector = new MockGitInspector({ [cwd]: { isRepo: true, remote: 'https://github.com/pubcoreagencia/test-project.git', branch: 'main' } });
   const resolver = new WorkspaceResolver(undefined, gitInspector);
-  const resolution = resolver.resolveWorkspace(cwd);
-  const safetyGate = new SafetyGate();
-  const safety = safetyGate.evaluate(resolution);
+  const safety = new SafetyGate().evaluate(resolver.resolveWorkspace(cwd));
   assert.equal(safety.passed, true);
   const context = safety.context!;
-
-  let agReceivedCwd: string | undefined;
-
-  const mockGpt: IGptTransport = {
-    createSession: () => 'gpt-session-1',
-    health: async () => ({ status: 'ok', initialized: true, isProcessing: false }),
-    sendPrompt: async (): Promise<GptPromptResponse> => ({
-      request_id: 'r1',
-      session_id: 's1',
-      status: 'COMPLETED',
-      text: 'echo "hello from gpt" [[STATUS: READY]]',
-      duration_ms: 10
-    }),
-    continueSession: async (): Promise<GptPromptResponse> => ({
-      request_id: 'r2',
-      session_id: 's1',
-      status: 'COMPLETED',
-      text: 'echo "hello from gpt" [[STATUS: READY]]',
-      duration_ms: 10
-    }),
-    recover: async () => true
-  };
-
-  const mockAg: IAntigravityTransport = {
-    health: async () => ({ status: 'ok' }),
-    sendPrompt: async (_prompt: string, options?: AntigravityPromptOptions): Promise<AntigravityExecutionResult> => {
-      agReceivedCwd = options?.cwd;
-      return {
-        request_id: options?.request_id || 'ag-1',
-        session_id: options?.session_id || 'ag-s1',
-        conversation_id: 'ag-conv-1',
-        status: 'COMPLETED',
-        response: 'done',
-        duration_ms: 15
-      };
+  let runtimeReceivedCwd: string | undefined;
+  const runtime: any = {
+    id: 'test-runtime',
+    provider: 'test',
+    version: '1',
+    capabilities: { supported: ['filesystem.read', 'filesystem.write', 'shell.execute'], supportsStreaming: false, requiresHumanApproval: false, isHeadless: true },
+    checkHealth: async () => ({ healthy: true, availableCapacity: 1 }),
+    execute: async (plan: any) => {
+      runtimeReceivedCwd = plan.request.workspacePath;
+      return { runId: 'runtime-run-1', status: 'COMPLETED', output: 'done', metrics: { durationMs: 1 } };
     }
   };
-
-  const engine = new ClosedLoopEngine(mockGpt, mockAg, {
-    cwd: context.workspacePath,
-    executionContext: context
-  });
-
-  const report = await engine.runLoop('Minha task de teste', {
-    maxTurns: 1,
-    executionContext: context
-  });
-
+  const engine = new ClosedLoopEngine(undefined, runtime, { cwd: context.workspacePath, executionContext: context });
+  const report = await engine.runLoop('Minha task de teste', { maxTurns: 1, executionContext: context });
   assert.equal(report.status, 'COMPLETED');
-  assert.equal(agReceivedCwd, cwd, 'AntigravityTransport must receive ExecutionContext.workspacePath as cwd');
+  assert.equal(runtimeReceivedCwd, cwd, 'generic runtime must receive ExecutionContext.workspacePath');
 });
