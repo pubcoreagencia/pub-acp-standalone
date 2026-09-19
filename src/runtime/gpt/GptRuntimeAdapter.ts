@@ -151,7 +151,7 @@ export class GptRuntimeAdapter implements IAgentRuntime {
         return {
           runId,
           status: 'COMPLETED',
-          output: action.message || 'GPT marked execution complete.',
+          output: `[[ACP_COMPLETE]] ${action.message || 'GPT marked execution complete.'}`,
           metrics: { durationMs: Date.now() - started, turnsCount: 1 }
         };
       }
