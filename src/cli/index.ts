@@ -406,7 +406,9 @@ async function main() {
               ? `A validação obrigatória é: ${validationCommand}. Corrija qualquer falha antes de concluir.`
               : 'Execute testes ou verificações relevantes antes de concluir.',
             'Quando tudo estiver implementado e verificado, use a ação complete.'
-          ].join('\n')
+          ].join('\n'),
+        stopCondition: (runtimeResponse) =>
+          runtimeResponse.includes('[[ACP_COMPLETE]]')
       });
 
       for (const t of report.turns) {
