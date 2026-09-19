@@ -1,11 +1,9 @@
 #!/usr/bin/env node
-import { AcpLabClient } from '../client/acp-lab-client.js';
+import { GptTransport } from '../gpt/index.js';
 
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
-
-  const client = new AcpLabClient();
 
   if (!command || command === '--help' || command === '-h') {
     console.log('PUB-ACP Standalone CLI');
@@ -26,17 +24,24 @@ async function main() {
     console.log('  acp catalog remove <projectId> [--catalog <path>]');
     console.log('');
     console.log('Environment:');
-    console.log('  ACP_LAB_URL=http://127.0.0.1:5125 (default)');
+    console.log('  GPT_BASE_URL=<OpenAI-compatible /v1 endpoint>');
+    console.log('  GPT_API_KEY=<API key, when required>');
+    console.log('  GPT_MODEL=<model identifier>');
     console.log('  PUB_ACP_CATALOG_PATH=<path> (optional catalog path)');
     process.exit(0);
   }
 
   try {
     if (command === 'health') {
-      const res = await client.health();
-      console.log('ACP-LAB ONLINE');
-      console.log(JSON.stringify(res, null, 2));
-      process.exit(0);
+      const transport = new GptTransport();
+      const res = await transport.health();
+      console.log(res.status === 'ok' ? 'GPT ENDPOINT ONLINE' : 'GPT ENDPOINT UNAVAILABLE');
+      console.log(JSON.stringify({
+        ...res,
+        baseUrl: transport.getBaseUrl(),
+        model: transport.getModel()
+      }, null, 2));
+      process.exit(res.status === 'ok' ? 0 : 1);
     }
 
     if (command === 'prompt') {
@@ -59,8 +64,8 @@ async function main() {
         }
       }
 
-      const res = await client.prompt({
-        prompt: promptText,
+      const transport = new GptTransport();
+      const res = await transport.sendPrompt(promptText, {
         session_id: sessionId,
         timeout_ms: timeoutMs
       });

@@ -36,6 +36,7 @@ export interface GptRuntimeAdapterConfig {
   gptTransport?: IGptTransport;
   commandExecutor?: WorkspaceCommandExecutor;
   defaultTimeoutMs?: number;
+  model?: string;
 }
 
 export class GptRuntimeAdapter implements IAgentRuntime {
@@ -61,11 +62,13 @@ export class GptRuntimeAdapter implements IAgentRuntime {
   private readonly gpt: IGptTransport;
   private readonly executor: WorkspaceCommandExecutor;
   private readonly defaultTimeoutMs: number;
+  private readonly model?: string;
 
   constructor(config: GptRuntimeAdapterConfig = {}) {
     this.gpt = config.gptTransport || new GptTransport();
     this.executor = config.commandExecutor || new WorkspaceCommandExecutor();
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? 300000;
+    this.model = config.model;
   }
 
   async checkHealth(): Promise<RuntimeHealth> {
@@ -132,7 +135,8 @@ export class GptRuntimeAdapter implements IAgentRuntime {
     try {
       const response = await this.gpt.sendPrompt(prompt, {
         request_id: plan.planId,
-        timeout_ms: plan.request.timeoutMs || this.defaultTimeoutMs
+        timeout_ms: plan.request.timeoutMs || this.defaultTimeoutMs,
+        options: this.model ? { model: this.model } : undefined
       });
 
       if (response.status !== 'COMPLETED') {

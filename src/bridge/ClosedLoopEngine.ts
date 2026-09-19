@@ -25,7 +25,8 @@ export class ClosedLoopEngine {
   ) {
     this.runtime = runtime || new GptRuntimeAdapter({
       gptTransport,
-      defaultTimeoutMs: config.defaultTimeoutMs
+      defaultTimeoutMs: config.defaultTimeoutMs,
+      model: config.model
     });
     this.validator = config.validator;
     this.config = {

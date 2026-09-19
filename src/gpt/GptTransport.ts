@@ -1,122 +1,255 @@
 import { randomUUID } from 'node:crypto';
-import { AcpLabClient } from '../client/acp-lab-client.js';
 import {
   GptHealthResult,
   GptPromptOptions,
   GptPromptResponse,
-  GptTransportStatus,
   IGptTransport
 } from './types.js';
 
 export interface GptTransportConfig {
   baseUrl?: string;
+  apiKey?: string;
+  model?: string;
   defaultTimeoutMs?: number;
-  client?: AcpLabClient;
+}
+
+function joinUrl(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
+}
+
+async function readJson(response: Response): Promise<any> {
+  try {
+    return await response.json();
+  } catch (err: any) {
+    throw new Error(`Invalid JSON response: ${err?.message || 'unknown parse error'}`);
+  }
 }
 
 export class GptTransport implements IGptTransport {
-  private readonly client: AcpLabClient;
+  private readonly baseUrl: string;
+  private readonly apiKey?: string;
+  private readonly model?: string;
   private readonly defaultTimeoutMs: number;
 
   constructor(config: GptTransportConfig = {}) {
-    this.client = config.client || new AcpLabClient({
-      baseUrl: config.baseUrl,
-      timeoutMs: config.defaultTimeoutMs
-    });
-    this.defaultTimeoutMs = config.defaultTimeoutMs || 120000;
+    const explicitBaseUrl =
+      config.baseUrl ||
+      process.env.GPT_BASE_URL ||
+      process.env.OPENAI_BASE_URL;
+
+    const openAiKey = config.apiKey || process.env.GPT_API_KEY || process.env.OPENAI_API_KEY;
+    const openRouterKey = process.env.OPENROUTER_API_KEY;
+
+    this.baseUrl =
+      explicitBaseUrl ||
+      (openRouterKey && !openAiKey
+        ? 'https://openrouter.ai/api/v1'
+        : 'https://api.openai.com/v1');
+
+    this.apiKey =
+      config.apiKey ||
+      process.env.GPT_API_KEY ||
+      process.env.OPENAI_API_KEY ||
+      process.env.OPENROUTER_API_KEY;
+
+    this.model =
+      config.model ||
+      process.env.GPT_MODEL ||
+      process.env.OPENAI_MODEL ||
+      process.env.OPENROUTER_MODEL;
+
+    this.defaultTimeoutMs = config.defaultTimeoutMs ?? 120000;
+  }
+
+  getBaseUrl(): string {
+    return this.baseUrl;
+  }
+
+  getModel(): string | undefined {
+    return this.model;
   }
 
   createSession(): string {
     return `gpt-session-${randomUUID()}`;
   }
 
-  async health(timeoutMs = 5000): Promise<GptHealthResult> {
+  async health(timeoutMs = 10000): Promise<GptHealthResult> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
-      const h = await this.client.health(timeoutMs);
-      if (h.status === 'ok') {
+      const response = await fetch(joinUrl(this.baseUrl, '/models'), {
+        method: 'GET',
+        headers: this.apiKey
+          ? { Accept: 'application/json', Authorization: `Bearer ${this.apiKey}` }
+          : { Accept: 'application/json' },
+        signal: controller.signal
+      });
+
+      const json = await readJson(response);
+
+      if (!response.ok) {
         return {
-          status: 'ok',
-          initialized: h.initialized ?? true,
-          isProcessing: h.isProcessing ?? false,
-          details: h.health as Record<string, unknown>
+          status: 'error',
+          initialized: false,
+          error: json?.error?.message || `GPT endpoint returned HTTP ${response.status}`
         };
       }
+
       return {
-        status: 'error',
-        initialized: false,
-        error: `Remote health check returned status ${h.status}`
+        status: 'ok',
+        initialized: true,
+        isProcessing: false,
+        details: {
+          baseUrl: this.baseUrl,
+          model: this.model,
+          modelsAvailable: Array.isArray(json?.data) ? json.data.length : undefined
+        }
       };
     } catch (err: any) {
-      if (err.message && (err.message.includes('LOGIN_REQUIRED') || err.message.includes('not authenticated'))) {
+      if (err?.name === 'AbortError') {
         return {
-          status: 'human_required',
+          status: 'error',
           initialized: false,
-          humanRequiredReason: 'ChatGPT session requires manual initial login in the browser'
+          error: `GPT health check timed out after ${timeoutMs}ms`
         };
       }
+
       return {
         status: 'error',
         initialized: false,
-        error: err.message || 'Health check failed'
+        error: err?.message || 'GPT health check failed'
       };
+    } finally {
+      clearTimeout(timer);
     }
   }
 
   async sendPrompt(prompt: string, options: GptPromptOptions = {}): Promise<GptPromptResponse> {
-    const startTime = Date.now();
+    const started = Date.now();
     const requestId = options.request_id || `gpt-req-${randomUUID()}`;
     const timeoutMs = options.timeout_ms || this.defaultTimeoutMs;
+    const requestedModel =
+      typeof options.options?.model === 'string' ? options.options.model : undefined;
+    const model = requestedModel || this.model;
+    const sessionId = options.session_id || this.createSession();
+
+    if (!model) {
+      return {
+        request_id: requestId,
+        session_id: sessionId,
+        status: 'FAILED',
+        text: '',
+        duration_ms: Date.now() - started,
+        error: {
+          code: 'CONFIG_ERROR',
+          message: 'No GPT model configured. Set GPT_MODEL or pass a model through runtime configuration.'
+        }
+      };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const response = await this.client.prompt({
-        request_id: requestId,
-        session_id: options.session_id,
-        prompt,
-        timeout_ms: timeoutMs,
-        options: options.options
+      const response = await fetch(joinUrl(this.baseUrl, '/chat/completions'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {})
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }]
+        }),
+        signal: controller.signal
       });
 
-      let status: GptTransportStatus = 'COMPLETED';
-      if ((response.status as string) !== 'completed') {
-        status = 'FAILED';
+      const json = await readJson(response);
+
+      if (!response.ok) {
+        const message =
+          json?.error?.message ||
+          json?.message ||
+          `GPT endpoint returned HTTP ${response.status}`;
+
+        return {
+          request_id: json?.id || requestId,
+          session_id: sessionId,
+          status: 'FAILED',
+          text: '',
+          duration_ms: Date.now() - started,
+          error: {
+            code: json?.error?.code || `HTTP_${response.status}`,
+            message,
+            details: json?.error
+          }
+        };
+      }
+
+      const text =
+        json?.choices?.[0]?.message?.content ??
+        (typeof json?.choices?.[0]?.text === 'string' ? json.choices[0].text : '');
+
+      if (typeof text !== 'string' || text.length === 0) {
+        return {
+          request_id: json?.id || requestId,
+          session_id: sessionId,
+          status: 'FAILED',
+          text: '',
+          duration_ms: Date.now() - started,
+          error: {
+            code: 'INVALID_RESPONSE',
+            message: 'GPT response did not contain choices[0].message.content.'
+          }
+        };
       }
 
       return {
-        request_id: response.request_id || requestId,
-        session_id: response.session_id || options.session_id || 'default-session',
-        status,
-        text: response.text || response.response || '',
-        duration_ms: response.duration_ms || (Date.now() - startTime),
-        metadata: response.metadata,
-        error: response.error ? {
-          code: response.error.code || 'REMOTE_ERROR',
-          message: response.error.message || 'Unknown error'
-        } : undefined
+        request_id: json?.id || requestId,
+        session_id: sessionId,
+        status: 'COMPLETED',
+        text,
+        duration_ms: Date.now() - started,
+        metadata: {
+          model,
+          provider: this.baseUrl,
+          usage: json?.usage,
+          finish_reason: json?.choices?.[0]?.finish_reason,
+          session_mode: 'logical'
+        }
       };
     } catch (err: any) {
-      const durationMs = Date.now() - startTime;
-      let status: GptTransportStatus = 'FAILED';
+      const durationMs = Date.now() - started;
 
-      if (err.code === 'TIMEOUT') {
-        status = 'TIMEOUT';
-      } else if (err.code === 'HUMAN_REQUIRED' || (err.message && err.message.includes('LOGIN_REQUIRED'))) {
-        status = 'HUMAN_REQUIRED';
-      } else if (err.code === 'NETWORK_ERROR') {
-        status = 'FAILED';
+      if (err?.name === 'AbortError') {
+        return {
+          request_id: requestId,
+          session_id: sessionId,
+          status: 'TIMEOUT',
+          text: '',
+          duration_ms: durationMs,
+          error: {
+            code: 'TIMEOUT',
+            message: `GPT request timed out after ${timeoutMs}ms`
+          }
+        };
       }
 
       return {
         request_id: requestId,
-        session_id: options.session_id || 'default-session',
-        status,
+        session_id: sessionId,
+        status: 'FAILED',
         text: '',
         duration_ms: durationMs,
         error: {
-          code: err.code || 'TRANSPORT_ERROR',
-          message: err.message || 'Error communicating with GPT backend',
-          details: err.details
+          code: 'NETWORK_ERROR',
+          message: err?.message || 'Error communicating with GPT endpoint'
         }
       };
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -132,11 +265,7 @@ export class GptTransport implements IGptTransport {
   }
 
   async recover(): Promise<boolean> {
-    try {
-      const h = await this.health(5000);
-      return h.status === 'ok';
-    } catch {
-      return false;
-    }
+    const health = await this.health(5000);
+    return health.status === 'ok';
   }
 }
