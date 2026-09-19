@@ -108,38 +108,37 @@ test('Real Event Feed - ClosedLoopEngine connected to EventBus, RunStore, and SS
       receivedEventsOverBus.push(evt.type);
     });
 
-    // Real ClosedLoopEngine instance wired directly to the real EventBus
+    // Real ClosedLoopEngine instance wired directly to the generic runtime and EventBus
     const loopId = 'real-closed-loop-run-001';
+    const runtime = {
+      id: 'gpt-runtime-test',
+      provider: 'test',
+      version: '1',
+      capabilities: {
+        supported: ['filesystem.read', 'filesystem.write', 'shell.execute'],
+        supportsStreaming: false,
+        requiresHumanApproval: false,
+        isHeadless: true
+      },
+      checkHealth: async () => ({ healthy: true, availableCapacity: 1 }),
+      execute: async (plan: any, onEvent?: (event: any) => void) => {
+        onEvent?.({
+          runId: plan.planId,
+          type: 'CHUNK',
+          payload: { output: 'Wrote files and verified test suite.' },
+          timestamp: new Date().toISOString()
+        });
+        return {
+          runId: plan.planId,
+          status: 'COMPLETED',
+          output: 'Wrote files and verified test suite.',
+          metrics: { durationMs: 5, turnsCount: 1 }
+        };
+      }
+    };
     const engine = new ClosedLoopEngine(
-      {
-        health: async () => ({ status: 'ok', initialized: true }),
-        createSession: () => 'sess-1',
-        sendPrompt: async (prompt, opts) => ({
-          request_id: opts?.request_id || 'req-1',
-          session_id: opts?.session_id || 'sess-1',
-          status: 'COMPLETED',
-          text: 'Scaffold application test files',
-          duration_ms: 15
-        }),
-        continueSession: async (sess, prompt, opts) => ({
-          request_id: opts?.request_id || 'req-2',
-          session_id: sess,
-          status: 'COMPLETED',
-          text: 'Verify test results',
-          duration_ms: 15
-        })
-      },
-      {
-        health: async () => ({ status: 'ok', agyPath: 'mock' }),
-        sendPrompt: async (prompt, opts) => ({
-          request_id: opts?.request_id || 'ag-req',
-          session_id: opts?.session_id || 'ag-sess',
-          conversation_id: 'conv-real-test',
-          status: 'COMPLETED',
-          response: 'Wrote files and verified test suite.',
-          duration_ms: 25
-        })
-      },
+      undefined,
+      runtime,
       {
         eventBus,
         projectName: 'Real ClosedLoop Verification Run'
@@ -175,9 +174,9 @@ test('Real Event Feed - ClosedLoopEngine connected to EventBus, RunStore, and SS
     // Verify events were emitted by the engine and recorded in EventBus
     assert.ok(receivedEventsOverBus.includes('RUN_STARTED'));
     assert.ok(receivedEventsOverBus.includes('GPT_DECISION'));
-    assert.ok(receivedEventsOverBus.includes('AG_STARTED'));
-    assert.ok(receivedEventsOverBus.includes('AG_OUTPUT'));
-    assert.ok(receivedEventsOverBus.includes('AG_FINISHED'));
+    assert.ok(receivedEventsOverBus.includes('RUNTIME_STARTED'));
+    assert.ok(receivedEventsOverBus.includes('RUNTIME_OUTPUT'));
+    assert.ok(receivedEventsOverBus.includes('RUNTIME_FINISHED'));
     assert.ok(receivedEventsOverBus.includes('RUN_COMPLETED'));
 
     // Verify RunStore recorded the run and its updated states
@@ -186,7 +185,7 @@ test('Real Event Feed - ClosedLoopEngine connected to EventBus, RunStore, and SS
     assert.equal(recordedRun.project, 'Real ClosedLoop Verification Run');
     assert.equal(recordedRun.status, 'COMPLETED');
     assert.equal(recordedRun.gptTurns, 2);
-    assert.equal(recordedRun.agExecutions, 2);
+    assert.equal(recordedRun.agExecutions, 0);
     assert.ok(recordedRun.events.length >= 6);
 
     // Verify API returns the real execution run
