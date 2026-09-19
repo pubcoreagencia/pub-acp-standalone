@@ -12,7 +12,7 @@ async function main() {
     console.log('');
     console.log('Usage:');
     console.log('  acp "<task prompt>"');
-    console.log('  acp run "<task prompt>" [--turns <n>] [--model <name>]');
+    console.log('  acp run "<task prompt>" [--turns <n>] [--model <name>] [--validate "<command>"]');
     console.log('  acp health');
     console.log('  acp prompt "<text>" [--session <id>] [--timeout <ms>]');
     console.log('  acp control-room [--port <number>] [--host <ip>] [--catalog <path>]');
@@ -300,6 +300,8 @@ async function main() {
 
       let maxTurns = 5;
       let model: string | undefined;
+      let validationCommand: string | undefined;
+      let validationTimeoutMs = 180000;
 
       const argStartIndex = command === 'run' ? 2 : 1;
       for (let i = argStartIndex; i < args.length; i++) {
@@ -309,16 +311,24 @@ async function main() {
         } else if (args[i] === '--model' && args[i + 1]) {
           model = args[i + 1];
           i++;
+        } else if (args[i] === '--validate' && args[i + 1]) {
+          validationCommand = args[i + 1];
+          i++;
+        } else if (args[i] === '--validate-timeout' && args[i + 1]) {
+          validationTimeoutMs = parseInt(args[i + 1], 10);
+          i++;
         }
       }
 
       const cwd = process.cwd();
       console.log('==================================================');
-      console.log('PUB ACP — AUTONOMOUS CLOSED-LOOP EXECUTION');
+      console.log('PUB ACP — GPT-ONLY AUTONOMOUS CLOSED-LOOP EXECUTION');
       console.log('==================================================');
       console.log(`Workspace: ${cwd}`);
       console.log(`Task:      ${taskPrompt}`);
       console.log(`Max turns: ${maxTurns}`);
+      if (model) console.log(`Model:     ${model}`);
+      if (validationCommand) console.log(`Validation: REQUIRED -> ${validationCommand}`);
       console.log('Validating workspace and security rules...');
 
       const { WorkspaceResolver } = await import('../multiproject/WorkspaceResolver.js');
@@ -346,7 +356,15 @@ async function main() {
       }
 
       const context = safetyResult.context;
+      if (validationCommand) {
+        context.validationPolicy = {
+          mode: 'REQUIRED',
+          command: validationCommand,
+          timeoutMs: validationTimeoutMs
+        };
+      }
       console.log(`Repository: ${context.repository} (branch: ${context.branch})`);
+      console.log(`Project ID:  ${context.projectId}`);
       console.log(`SafetyGate: PASSED`);
       console.log('\n[ClosedLoopEngine] Initializing autonomous loop...\n');
 
@@ -356,28 +374,47 @@ async function main() {
         executionContext: context
       });
 
-      const initialPrompt = `Você é o arquiteto técnico autônomo.
-O diretório de trabalho exclusivo da tarefa é: "${context.workspacePath}".
-O executor das ações no workspace é o Antigravity.
-Sua missão: ${taskPrompt}
-
-Instruções para você:
-1. Responda com as instruções técnicas exatas e comandos concretos para o Antigravity executar agora neste workspace.
-2. Quando a tarefa estiver concluída e validada no workspace, encerre sua mensagem com o token: [[STATUS: READY]].`;
+      const initialPrompt = [
+        'Execute the requested task directly in the authorized workspace using the ACP runtime.',
+        'You are the only reasoning/execution agent in this loop.',
+        'Return exactly one JSON action object as required by the runtime contract.',
+        'For shell actions, use workspace-relative commands only.',
+        'Inspect the current repository before making changes.',
+        'Implement the task, run the requested validation, correct failures, and finish only when the workspace is in a verified state.',
+        '',
+        `Authorized workspace: ${context.workspacePath}`,
+        `Repository: ${context.repository}`,
+        `Branch: ${context.branch}`,
+        '',
+        `Task: ${taskPrompt}`
+      ].join('\n');
 
       const report = await engine.runLoop(initialPrompt, {
         loopId: context.runId,
         maxTurns,
         executionContext: context,
-        turnPromptBuilder: (prevAgResponse, turn) =>
-          `[RESULTADO DO ANTIGRAVITY - TURNO ${turn - 1}]:\n"""\n${prevAgResponse}\n"""\n` +
-          `Analise o resultado acima. Forneça a instrução do próximo passo para o Antigravity ou encerre com [[STATUS: READY]] se concluído.`
+        turnPromptBuilder: (previousRuntimeResponse, turn) =>
+          [
+            `[RESULTADO DO RUNTIME - TURNO ${turn - 1}]`,
+            '"""',
+            previousRuntimeResponse,
+            '"""',
+            'Analise o resultado acima no contexto da tarefa.',
+            'Inspecione o workspace atual antes do próximo passo.',
+            'Execute somente o próximo passo necessário.',
+            validationCommand
+              ? `A validação obrigatória é: ${validationCommand}. Corrija qualquer falha antes de concluir.`
+              : 'Execute testes ou verificações relevantes antes de concluir.',
+            'Quando tudo estiver implementado e verificado, use a ação complete.'
+          ].join('\n')
       });
 
       for (const t of report.turns) {
         console.log(`\n--- TURNO ${t.turn} ---`);
-        console.log(`[GPT]: ${t.gpt_response?.slice(0, 150)}...`);
-        console.log(`[AG]:  ${t.antigravity_response?.slice(0, 150)}...`);
+        console.log(`[RUNTIME OUTPUT]: ${t.runtime_response?.slice(0, 500) || '(empty)'}`);
+        if (t.error) {
+          console.log(`[TURN ERROR]: ${t.error.code} - ${t.error.message}`);
+        }
       }
 
       console.log('\n==================================================');
