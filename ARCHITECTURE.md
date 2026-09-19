@@ -42,3 +42,28 @@ O cliente comunica-se apenas através de transporte HTTP/JSON padronizado:
 - `POST /v1/transport/prompt`
 
 Nenhum módulo interno do ACP-LAB, automação de browser, CDP, DOM ou dependência do PDL é importado.
+
+
+## Validated Runtime Mode — 2026-09-19
+
+The active execution path for the validated checkpoint is GPT-only:
+
+```text
+ChatGPT Free
+   ↓
+Chrome / CDP :9555
+   ↓
+PUB-ACP-POC local transport :5127
+   ↓
+AcpLabClient / GptTransport
+   ↓
+GptRuntimeAdapter
+   ↓
+ClosedLoopEngine
+   ↓
+SafetyGate + authorized workspace
+```
+
+Antigravity-related components in this repository are historical compatibility surfaces and are not part of the active execution path covered by the GPT-only checkpoint.
+
+Runtime failures with remaining turns are returned as correction context instead of being immediately terminal. Workspace command security remains fail-closed.
