@@ -11,7 +11,7 @@ class FakeGpt implements IGptTransport {
       request_id: 'req-1',
       session_id: 'session-1',
       status: 'COMPLETED' as const,
-      text: JSON.stringify({ action: 'shell', command: 'node -e "process.stdout.write(\\'runtime-ok\\')" }),
+      text: JSON.stringify({ action: 'shell', command: "node -e \"process.stdout.write('runtime-ok')\"" }),
       duration_ms: 1
     };
   }
