@@ -56,8 +56,8 @@ test('Integration: ClosedLoop with simulated GPT Runtime and workspace execution
     assert.equal(report.manual_copy_paste_operations, 0);
     assert.ok(fs.existsSync(targetFile), 'Target file must exist after 3 turns');
 
-    const fileContent = fs.readFileSync(targetFile, 'utf8').replace(/\\r\\n/g, '\\n').trim();
-    const expected = 'GPT-LOOP-1\\nGPT-LOOP-2\\nGPT-LOOP-3';
+    const fileContent = fs.readFileSync(targetFile, 'utf8').replace(/\r\n/g, '\n').trim();
+    const expected = ['GPT-LOOP-1', 'GPT-LOOP-2', 'GPT-LOOP-3'].join('\n');
     assert.equal(fileContent, expected, `Expected file content to be "${expected}", got "${fileContent}"`);
   } finally {
     if (fs.existsSync(targetFile)) fs.unlinkSync(targetFile);
