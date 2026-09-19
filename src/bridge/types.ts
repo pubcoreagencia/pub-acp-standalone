@@ -44,19 +44,24 @@ export interface ClosedLoopTurnSummary {
   turn: number;
   gpt_request_id?: string;
   antigravity_request_id?: string;
+  runtime_request_id?: string;
   prompt_sent_to_gpt: string;
   gpt_response: string;
   antigravity_instruction: string;
   antigravity_response: string;
+  runtime_response?: string;
   timestamps: {
     gpt_started_at: string;
     gpt_completed_at: string;
     antigravity_started_at: string;
     antigravity_completed_at: string;
+    runtime_started_at?: string;
+    runtime_completed_at?: string;
   };
   durations: {
     gpt_duration_ms: number;
     antigravity_duration_ms: number;
+    runtime_duration_ms?: number;
     total_turn_duration_ms: number;
   };
   status: 'COMPLETED' | 'FAILED' | 'TIMEOUT' | 'HUMAN_REQUIRED';
@@ -97,4 +102,6 @@ export interface ClosedLoopConfig {
   eventBus?: IEventBus;
   projectName?: string;
   executionContext?: ExecutionContext;
+  runtime?: import('../runtime/IAgentRuntime.js').IAgentRuntime;
+  validator?: import('../validation/types.js').IProjectValidator;
 }
