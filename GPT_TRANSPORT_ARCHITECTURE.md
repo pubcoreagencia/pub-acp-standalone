@@ -44,3 +44,30 @@ In Phase 4, the multi-turn bottleneck in ACP-LAB's browser driver was permanentl
 2. **Dual-Layer Completion Detection**: Replaced brittle copy button selectors with combined checks on streaming state, active stop buttons, and text stabilization.
 3. **Stall Recovery**: Automatic reload recovery when streaming pulses enter suspended idle states, allowing server-side finalized answers to render.
 4. **Proactive Modal Dismissal**: Dismisses feedback surveys ("Esta conversa foi útil?") and dialog overlays before interaction.
+
+
+## 5. Current Validated Operational Mode — 2026-09-19
+
+The validated physical path uses the local GPT Free browser transport:
+
+```text
+ChatGPT Free
+    ↓
+Chrome / CDP :9555
+    ↓
+PUB-ACP-POC transport :5127
+    ↓
+pub-acp-standalone GptTransport
+    ↓
+ClosedLoopEngine / GptRuntimeAdapter
+```
+
+Real isolated transport checks returned distinct expected responses for `TESTE_ACP_1` and `TESTE_ACP_2`. A prior concurrent-request block was cleared by a clean restart of the resident transport and was not reproduced in the successful physical E2E run.
+
+### Active runtime boundary
+
+`request_id` identifies an individual request. `session_id` identifies conversational continuity. They must not be conflated.
+
+### Historical compatibility note
+
+The Antigravity path shown in older sections is historical compatibility documentation. It is not the active runtime path represented by the 2026-09-19 GPT-only validation.
