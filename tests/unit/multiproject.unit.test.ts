@@ -255,16 +255,25 @@ test('ProjectDispatcher - executes full flow and propagates execution context', 
   const engineFactory = (ctx: any) => {
     engineExecutedCwd = ctx.workspacePath;
     return new ClosedLoopEngine(
+      undefined,
       {
-        health: async () => ({ status: 'ok', initialized: true }),
-        createSession: () => 'sess',
-        sendPrompt: async () => ({ request_id: 'r', session_id: 's', status: 'COMPLETED', text: 'ok', duration_ms: 5 }),
-        continueSession: async () => ({ request_id: 'r', session_id: 's', status: 'COMPLETED', text: 'ok', duration_ms: 5 })
-      },
-      {
-        health: async () => ({ status: 'ok', agyPath: 'mock' }),
-        sendPrompt: async () => ({ request_id: 'r', session_id: 's', conversation_id: 'c', status: 'COMPLETED', response: 'done', duration_ms: 5 })
-      },
+        id: 'test-runtime',
+        provider: 'test',
+        version: '1',
+        capabilities: {
+          supported: ['filesystem.read', 'filesystem.write', 'shell.execute'],
+          supportsStreaming: false,
+          requiresHumanApproval: false,
+          isHeadless: true
+        },
+        checkHealth: async () => ({ healthy: true, availableCapacity: 1 }),
+        execute: async () => ({
+          runId: 'runtime-run',
+          status: 'COMPLETED',
+          output: 'done',
+          metrics: { durationMs: 1 }
+        })
+      } as any,
       {
         eventBus,
         executionContext: ctx
