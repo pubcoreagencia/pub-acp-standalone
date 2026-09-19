@@ -13,7 +13,7 @@
     "test": "npm run test:unit && npm run test:contract && npm run test:integration && npm run test:e2e",
     "test:unit": "tsx --test tests/unit/**/*.test.ts",
     "test:contract": "tsx --test tests/contract/**/*.test.ts",
-    "test:integration": "tsx --test --test-concurrency=1 tests/integration/**/*.test.ts",
+    "test:integration": "tsx --test --test-concurrency=1 tests/integration/background-reliability.test.ts tests/integration/closed-loop.test.ts tests/integration/dispatcher.integration.test.ts tests/integration/live-health.test.ts",
     "test:e2e": "tsx --test --test-concurrency=1 tests/e2e/**/*.test.ts",
     "cli:health": "tsx src/cli/index.ts health",
     "cli:prompt": "tsx src/cli/index.ts prompt"
