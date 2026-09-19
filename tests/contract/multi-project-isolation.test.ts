@@ -79,13 +79,12 @@ test('Multi-Project Proof: Executes project-a and project-b in total isolation w
         },
         checkHealth: async () => ({ healthy: true, availableCapacity: 1 }),
         execute: async (plan: any) => {
-          const list = runtimeWorkspacesPerRun.get(ctx.runId) || [];
-          list.push(plan.request.workspacePath);
-          runtimeWorkspacesPerRun.set(ctx.runId, list);
+          runtimeCallCount++;
+          await run1EngineGate;
           return {
             runId: plan.planId,
             status: 'COMPLETED',
-            output: `Executed in ${plan.request.workspacePath}`,
+            output: 'done',
             metrics: { durationMs: 5, turnsCount: 1 }
           };
         }
