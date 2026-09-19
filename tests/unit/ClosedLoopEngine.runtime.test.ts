@@ -111,3 +111,64 @@ test('ClosedLoopEngine does not block on OPTIONAL validation failure', async () 
 
   assert.equal(report.status, 'COMPLETED');
 });
+
+
+test('ClosedLoopEngine retries a failed runtime turn with diagnostics when turns remain', async () => {
+  let calls = 0;
+  const recoveringRuntime: IAgentRuntime = {
+    id: 'recovering-runtime',
+    provider: 'test',
+    version: '1.0.0',
+    capabilities: {
+      supported: ['filesystem.read', 'filesystem.write', 'shell.execute', 'headless'] as const,
+      supportsStreaming: false,
+      requiresHumanApproval: false,
+      isHeadless: true
+    },
+    async checkHealth() {
+      return { healthy: true, availableCapacity: 1 };
+    },
+    async execute(plan: ExecutionPlan) {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          runId: plan.planId,
+          status: 'FAILED',
+          output: 'Command rejected: explicit absolute or UNC filesystem paths are not allowed.',
+          diagnostics: ['Workspace command was rejected before execution.'],
+          metrics: { durationMs: 1, turnsCount: 1 }
+        };
+      }
+      return {
+        runId: plan.planId,
+        status: 'COMPLETED',
+        output: '[[ACP_COMPLETE]] corrected',
+        metrics: { durationMs: 1, turnsCount: 1 }
+      };
+    }
+  };
+
+  const engine = new ClosedLoopEngine(undefined, recoveringRuntime, {
+    cwd: process.cwd(),
+    executionContext: {
+      runId: 'run-recovery-test',
+      taskId: 'task-recovery-test',
+      projectId: 'test-project',
+      projectName: 'Test Project',
+      workspacePath: process.cwd(),
+      repository: 'test/repo',
+      branch: 'main'
+    }
+  });
+
+  const report = await engine.runLoop('execute the task', {
+    loopId: 'run-recovery-test',
+    maxTurns: 2
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(report.status, 'COMPLETED');
+  assert.equal(report.total_turns, 2);
+  assert.equal(report.turns[0].status, 'FAILED');
+  assert.equal(report.turns[1].runtime_response, '[[ACP_COMPLETE]] corrected');
+});
