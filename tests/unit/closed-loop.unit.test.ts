@@ -38,12 +38,13 @@ test('ClosedLoopEngine executes multi-turn loop through generic runtime without 
   assert.equal(report.turns[2].runtime_response, 'EXECUTION_RESULT_TURN_3');
 });
 
-test('ClosedLoopEngine gracefully stops on generic runtime failure', async () => {
+test('ClosedLoopEngine retries generic runtime failure until the turn budget is exhausted', async () => {
   const runtime = new FakeRuntime();
   runtime.fail = true;
   const report = await new ClosedLoopEngine(undefined, runtime).runLoop('Initial prompt', { maxTurns: 3 });
   assert.equal(report.status, 'FAILED');
-  assert.equal(report.total_turns, 1);
+  assert.equal(report.total_turns, 3);
+  assert.equal(runtime.calls, 3);
   assert.equal(report.error?.where, 'loop_engine');
   assert.equal(report.error?.code, 'RUNTIME_EXECUTION_FAILED');
 });
