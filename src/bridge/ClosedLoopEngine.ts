@@ -283,6 +283,15 @@ export class ClosedLoopEngine {
           }
         });
 
+        if (validationFailed) {
+          previousRuntimeResponse = [
+            runtimeResult.output,
+            '',
+            '[VALIDATION RESULT]',
+            validationSummary
+          ].join('\n');
+        }
+
         if (validationFailed && turn < maxTurns) {
           this.emitEvent({
             id: `evt-${randomUUID()}`,
