@@ -73,7 +73,7 @@ export class ClosedLoopEngine {
     const maxTurns = options.maxTurns || 3;
     const startedAt = new Date().toISOString();
     const overallStartTime = Date.now();
-    const effectiveCwd = options.cwd || execCtx?.workspacePath || this.config.cwd;
+    const effectiveCwd = options.cwd || execCtx?.workspacePath || this.config.cwd || process.cwd();
     const effectiveProject = execCtx?.projectName || this.config.projectName || 'ACP Standalone';
 
     this.emitEvent({
@@ -164,7 +164,7 @@ export class ClosedLoopEngine {
           prompt,
           requiredCapabilities: ['filesystem.read', 'filesystem.write', 'shell.execute'],
           timeoutMs: this.config.defaultTimeoutMs,
-          metadata: { runId: loopId, turn }
+          metadata: { runId: loopId, turn, conversationId: options.conversationId }
         },
         createdAt: runtimeStartedAt
       }, event => {
