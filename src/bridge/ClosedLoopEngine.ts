@@ -265,8 +265,8 @@ export class ClosedLoopEngine {
 
         validationSummary = `${validation.status}: ${validation.summary}`;
         validationFailed =
-          validation.status === 'FAIL' ||
-          validation.status === 'ERROR';
+          execCtx.validationPolicy.mode === 'REQUIRED' &&
+          (validation.status === 'FAIL' || validation.status === 'ERROR');
 
         this.emitEvent({
           id: `evt-${randomUUID()}`,
